@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ubongo"
-version = "0.1.0"
-description = "Ubongo OS — Your local AI assistant. Control your Mac with natural language, 100% offline."
+version = "0.2.0"
+description = "Ubongo OS — Your local AI assistant. Control your computer with natural language, 100% offline."
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
@@ -23,6 +23,8 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
     "Topic :: System :: Systems Administration",
     "Topic :: Utilities",
     "Environment :: Console",

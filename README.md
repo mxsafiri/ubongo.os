@@ -1,7 +1,7 @@
 <p align="center">
   <h1 align="center">UBONGO OS</h1>
   <p align="center">
-    <strong>Your local AI assistant. Control your Mac with natural language, 100% offline.</strong>
+    <strong>Your local AI assistant. Control your computer with natural language, 100% offline.</strong>
   </p>
   <p align="center">
     <a href="https://github.com/mxsafiri/ubongo.os/releases"><img src="https://img.shields.io/github/v/release/mxsafiri/ubongo.os?style=flat-square" alt="Release"></a>
@@ -13,7 +13,7 @@
 
 ---
 
-Ubongo is a **fully offline** AI-powered CLI assistant that runs locally on your Mac. No cloud, no API keys, no subscriptions. Just talk to your computer in plain English.
+Ubongo is a **fully offline** AI-powered CLI assistant that runs locally on your computer. No cloud, no API keys, no subscriptions. Works on **macOS, Windows, and Linux**.
 
 ## Demo
 
@@ -41,7 +41,8 @@ You: are you online?
 - **Natural Language** — Just type what you want in plain English
 - **100% Offline** — Runs a local LLM via Ollama, no internet needed
 - **Instant Answers** — Math, capitals, facts, dates answered in 0.0s
-- **Mac Automation** — Open apps, manage files, control music, check system
+- **Cross-Platform** — macOS (AppleScript), Windows (PowerShell), Linux (basic)
+- **Automation** — Open apps, manage files, control music, check system
 - **Smart Fallback** — Never hangs; shows a spinner and gracefully times out
 - **Matrix Intro** — Cool terminal animation on launch
 - **Private** — Zero telemetry, all data stays on your machine
@@ -65,6 +66,7 @@ pip install -e .
 ### Prerequisites
 
 - **Python 3.11+**
+- **macOS, Windows 10+, or Linux**
 - **Ollama** — Install from [ollama.com](https://ollama.com), then pull a model:
 
 ```bash
@@ -147,9 +149,23 @@ pip install -e ".[dev]"
 pytest
 ```
 
+## Platform Support
+
+| Feature | macOS | Windows | Linux |
+|---------|-------|---------|-------|
+| Conversation & LLM | ✅ | ✅ | ✅ |
+| Quick Answers (math, facts) | ✅ | ✅ | ✅ |
+| File Operations | ✅ | ✅ | ✅ |
+| App Control | ✅ AppleScript | ✅ PowerShell | ⚠️ Basic |
+| Music Control | ✅ Music.app | ✅ Media Keys | ❌ |
+| System Info | ✅ | ✅ | ✅ |
+| Notifications | ✅ | ✅ Toast | ⚠️ notify-send |
+| Documents/Presentations | ✅ Keynote/Pages | ✅ PowerPoint/text | ❌ |
+| Browser Automation | ✅ (optional) | ✅ (optional) | ✅ (optional) |
+
 ## Roadmap
 
-- [ ] Linux & Windows support
+- [ ] Full Linux desktop automation
 - [ ] Plugin system for custom tools
 - [ ] Voice input/output
 - [ ] Homebrew formula (`brew install ubongo`)

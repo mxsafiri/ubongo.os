@@ -100,30 +100,76 @@ class AppControl:
     def _open_app_windows(self, app_name: str, action: Optional[str] = None) -> ExecutionResult:
         app_map = {
             "chrome": "chrome",
+            "google chrome": "chrome",
             "firefox": "firefox",
             "edge": "msedge",
+            "microsoft edge": "msedge",
             "notepad": "notepad",
             "calculator": "calc",
             "explorer": "explorer",
+            "file explorer": "explorer",
+            "finder": "explorer",
+            "terminal": "wt",
+            "windows terminal": "wt",
+            "cmd": "cmd",
+            "powershell": "powershell",
+            "vscode": "code",
+            "code": "code",
+            "visual studio code": "code",
+            "spotify": "spotify",
+            "music": "spotify",
+            "discord": "discord",
+            "slack": "slack",
+            "zoom": "zoom",
+            "teams": "msteams",
+            "microsoft teams": "msteams",
+            "word": "winword",
+            "excel": "excel",
+            "powerpoint": "powerpnt",
+            "outlook": "outlook",
+            "onenote": "onenote",
+            "paint": "mspaint",
+            "settings": "ms-settings:",
+            "system settings": "ms-settings:",
+            "task manager": "taskmgr",
+            "activity monitor": "taskmgr",
+            "snipping tool": "snippingtool",
+            "photos": "ms-photos:",
+            "mail": "outlookmail:",
+            "calendar": "outlookcal:",
+            "store": "ms-windows-store:",
+            "app store": "ms-windows-store:",
+            "whatsapp": "whatsapp",
+            "telegram": "telegram",
         }
         
         app_to_open = app_map.get(app_name.lower(), app_name)
         
         try:
-            subprocess.Popen([app_to_open])
+            # Handle UWP/protocol apps (contain ":")
+            if ":" in app_to_open:
+                import os
+                os.startfile(app_to_open)
+            else:
+                subprocess.Popen(
+                    ["cmd", "/c", "start", "", app_to_open],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
             
+            display_name = app_name.title() if app_name.lower() not in app_map else app_name
             logger.info("Opened app: %s", app_to_open)
             
             return ExecutionResult(
                 success=True,
-                message=f"✓ Opened {app_to_open}",
+                message=f"✓ Opened {display_name}",
                 data={"app": app_to_open, "action": action}
             )
         
         except Exception as e:
             return ExecutionResult(
                 success=False,
-                message=f"Failed to open {app_to_open}",
+                message=f"Failed to open {app_name}. Is it installed?",
                 error=str(e)
             )
     

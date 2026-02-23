@@ -284,7 +284,8 @@ class ScreenControl:
             return err
 
         try:
-            pyautogui.hotkey("command", "a")
+            mod_key = "command" if self.is_macos else "ctrl"
+            pyautogui.hotkey(mod_key, "a")
             time.sleep(0.2)
             pyautogui.typewrite(new_text) if new_text.isascii() else pyautogui.write(new_text)
             return ExecutionResult(

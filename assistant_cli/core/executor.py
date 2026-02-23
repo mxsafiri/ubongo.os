@@ -1,23 +1,57 @@
 from typing import Optional
 from assistant_cli.models import ParsedCommand, ExecutionResult, Intent
 from assistant_cli.tools import FileOperations, AppControl, SystemInfo
-from assistant_cli.tools import AppleScriptAutomation, ScreenControl, BrowserAutomation
+from assistant_cli.tools.platform_bridge import get_automation
 from assistant_cli.core.knowledge_base import CapabilityCatalog
 from assistant_cli.core.conversation import ConversationalResponder
 from assistant_cli.utils import logger
+
+class _UnavailableTool:
+    """Placeholder for optional tools that aren't installed."""
+    def __init__(self, name: str):
+        self._name = name
+    def __getattr__(self, item):
+        def _missing(*args, **kwargs):
+            return ExecutionResult(
+                success=False,
+                message=f"{self._name} is not available. Install the required package to enable it.",
+                error="Optional dependency not installed",
+            )
+        return _missing
+
 
 class CommandExecutor:
     def __init__(self):
         self.file_ops = FileOperations()
         self.app_control = AppControl()
         self.system_info = SystemInfo()
-        self.applescript = AppleScriptAutomation()
-        self.screen = ScreenControl()
-        self.browser = BrowserAutomation()
+        self.automation = get_automation()  # Platform-aware (macOS/Windows/Linux)
+        self._browser = None  # Lazy-loaded (optional dep)
+        self._screen = None   # Lazy-loaded (optional dep)
         self.capability_catalog = CapabilityCatalog()
         self.conversational_responder = ConversationalResponder()
         self.last_result: Optional[ExecutionResult] = None
         logger.info("CommandExecutor initialized with automation layers")
+
+    @property
+    def browser(self):
+        if self._browser is None:
+            try:
+                from assistant_cli.tools.browser_automation import BrowserAutomation
+                self._browser = BrowserAutomation()
+            except ImportError:
+                self._browser = _UnavailableTool("Browser automation (pip install playwright)")
+        return self._browser
+
+    @property
+    def screen(self):
+        if self._screen is None:
+            try:
+                from assistant_cli.tools.screen_control import ScreenControl
+                self._screen = ScreenControl()
+            except ImportError:
+                self._screen = _UnavailableTool("Screen control (pip install pyautogui)")
+        return self._screen
     
     def execute(self, command: ParsedCommand) -> ExecutionResult:
         logger.info("Executing command: %s with params: %s", command.intent, command.params)
@@ -83,15 +117,15 @@ class CommandExecutor:
                         # Filter out generic words
                         if raw not in ("music", "a song", "some music", "something", "songs"):
                             song = raw
-                    result = self.applescript.play_music(song=song, artist=artist)
+                    result = self.automation.play_music(song=song, artist=artist)
                 elif "pause" in lower or "stop music" in lower:
-                    result = self.applescript.pause_music()
+                    result = self.automation.pause_music()
                 elif "next" in lower and ("track" in lower or "song" in lower or "skip" in lower):
-                    result = self.applescript.next_track()
+                    result = self.automation.next_track()
                 elif "previous" in lower or "back" in lower and ("track" in lower or "song" in lower):
-                    result = self.applescript.previous_track()
+                    result = self.automation.previous_track()
                 elif "what" in lower and "playing" in lower:
-                    result = self.applescript.get_current_track()
+                    result = self.automation.get_current_track()
                 else:
                     # Normal app open
                     if not app_name and "music" in lower:
@@ -124,14 +158,14 @@ class CommandExecutor:
                 title = command.params.get("title", "Untitled Presentation")
                 slides = command.params.get("slides")
                 theme = command.params.get("theme", "Basic White")
-                result = self.applescript.create_presentation(
+                result = self.automation.create_presentation(
                     title=title, slides=slides, theme=theme
                 )
 
             elif command.intent == Intent.CREATE_DOCUMENT:
                 title = command.params.get("title", "Untitled Document")
                 content = command.params.get("content", "")
-                result = self.applescript.create_document(
+                result = self.automation.create_document(
                     title=title, content=content
                 )
 
@@ -152,7 +186,7 @@ class CommandExecutor:
                 elif url:
                     result = self.browser.navigate(url)
                 else:
-                    result = self.applescript.open_url(
+                    result = self.automation.open_url(
                         url or "https://www.google.com"
                     )
 
