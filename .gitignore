@@ -50,7 +50,6 @@ memory/
 cache/
 
 # Build artifacts
-*.spec
 build/
 dist/
 

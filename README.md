@@ -49,23 +49,43 @@ You: are you online?
 
 ## Install
 
-### Option 1: pip (recommended)
+### Option 1: Download binary (no Python needed)
+
+Go to [**Releases**](https://github.com/mxsafiri/ubongo.os/releases) and download the binary for your OS:
+
+| OS | File |
+|----|------|
+| macOS | `ubongo-x.x.x-macos-x86_64.tar.gz` |
+| Windows | `ubongo-x.x.x-windows-amd64.zip` |
+| Linux | `ubongo-x.x.x-linux-x86_64.tar.gz` |
+
+Then run:
+```bash
+# macOS / Linux
+chmod +x ubongo && ./ubongo start
+
+# Windows
+ubongo.exe start
+```
+
+### Option 2: pip (requires Python 3.11+)
 
 ```bash
 pip install ubongo
+ubongo start
 ```
 
-### Option 2: From source
+### Option 3: From source
 
 ```bash
 git clone https://github.com/mxsafiri/ubongo.os.git
 cd ubongo.os
 pip install -e .
+ubongo start
 ```
 
 ### Prerequisites
 
-- **Python 3.11+**
 - **macOS, Windows 10+, or Linux**
 - **Ollama** — Install from [ollama.com](https://ollama.com), then pull a model:
 

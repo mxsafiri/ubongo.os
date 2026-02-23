@@ -9,7 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  # ── Build Python package (wheel + sdist) ───────────────────────
+  python-package:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,21 +18,18 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install build twine
+          python-version: "3.12"
 
       - name: Build package
-        run: python -m build
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: dist/*
-          generate_release_notes: true
+          name: python-package
+          path: dist/*
 
       - name: Publish to PyPI
         env:
@@ -39,3 +37,70 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         run: twine upload dist/*
         continue-on-error: true
+
+  # ── Build standalone binaries per platform ─────────────────────
+  binaries:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            name: macos
+          - os: windows-latest
+            name: windows
+          - os: ubuntu-latest
+            name: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pyinstaller
+
+      - name: Build binary
+        run: python scripts/build_binary.py
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.name }}
+          path: dist/ubongo-*
+
+  # ── Create GitHub Release with all artifacts ───────────────────
+  release:
+    needs: [python-package, binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: find artifacts -type f | head -20
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            ### Option 1: pip (requires Python 3.11+)
+            ```bash
+            pip install ubongo
+            ```
+
+            ### Option 2: Standalone binary (no Python needed)
+            Download the binary for your OS below, then:
+            - **macOS/Linux**: `chmod +x ubongo && ./ubongo start`
+            - **Windows**: `ubongo.exe start`
