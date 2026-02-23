@@ -1,0 +1,82 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ubongo"
+version = "0.1.0"
+description = "Ubongo OS — Your local AI assistant. Control your Mac with natural language, 100% offline."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Safiri", email = "mxsafiri@users.noreply.github.com"}
+]
+keywords = ["cli", "automation", "ai", "assistant", "local-llm", "offline", "macos", "ubongo"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: MacOS",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Utilities",
+    "Environment :: Console",
+]
+
+dependencies = [
+    "rich>=13.7.0",
+    "typer>=0.9.0",
+    "ollama>=0.4.0",
+    "psutil>=5.9.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.7.0",
+    "pyinstaller>=6.0.0",
+]
+
+[project.scripts]
+ubongo = "assistant_cli.main:app"
+
+[project.urls]
+Homepage = "https://github.com/mxsafiri/ubongo.os"
+Documentation = "https://github.com/mxsafiri/ubongo.os#readme"
+Repository = "https://github.com/mxsafiri/ubongo.os"
+Issues = "https://github.com/mxsafiri/ubongo.os/issues"
+Changelog = "https://github.com/mxsafiri/ubongo.os/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["assistant_cli*"]
+
+[tool.setuptools.package-data]
+assistant_cli = ["py.typed"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
