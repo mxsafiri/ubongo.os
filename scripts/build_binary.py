@@ -64,10 +64,18 @@ def main():
     print(f"  OS:     {system}")
 
     # Create versioned archive for release
-    from assistant_cli import __version__
+    # Read version from __init__.py to avoid import issues
+    version_file = ROOT / "assistant_cli" / "__init__.py"
+    version = "0.2.1"  # fallback
+    if version_file.exists():
+        with open(version_file) as f:
+            for line in f:
+                if line.startswith("__version__"):
+                    version = line.split("=")[1].strip().strip('"\'')
+                    break
     arch = platform.machine().lower()
     os_name = {"Darwin": "macos", "Windows": "windows", "Linux": "linux"}.get(system, system.lower())
-    archive_name = f"ubongo-{__version__}-{os_name}-{arch}"
+    archive_name = f"ubongo-{version}-{os_name}-{arch}"
 
     if system == "Windows":
         archive_path = DIST / f"{archive_name}.zip"
