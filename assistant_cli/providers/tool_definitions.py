@@ -283,6 +283,77 @@ UBONGO_TOOLS: List[Dict[str, Any]] = [
         },
     },
 
+    # ── SEMANTIC MEMORY (cross-session facts) ───────────────────────
+    {
+        "name": "memory_recall",
+        "description": (
+            "Recall facts the user has asked you to remember in the past. "
+            "Use this BEFORE guessing — if the user references something you "
+            "don't see in MEMORY.md, search here. Returns up to `limit` facts "
+            "ranked by how many query tokens match their text or tags. "
+            "Empty query returns the most recently saved facts."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Free-text search across fact text and tags.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max facts to return (default 8, cap 100).",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "memory_save",
+        "description": (
+            "Save a single fact the user wants you to remember in future "
+            "conversations. Use this when the user says 'remember that...', "
+            "'from now on...', or confirms a preference that should persist. "
+            "Keep facts short (one sentence). For the bigger index-style "
+            "memory, edit ~/.ubongo/MEMORY.md instead."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The fact to remember. One sentence.",
+                },
+                "tags": {
+                    "type": "string",
+                    "description": (
+                        "Optional space-separated tags for recall "
+                        "(e.g. 'preference workflow')."
+                    ),
+                },
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "memory_forget",
+        "description": (
+            "Delete a previously saved fact by id. Call memory_recall first "
+            "to find the fact id, then pass it here. Only use when the user "
+            "explicitly asks you to forget something."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer",
+                    "description": "The fact id returned by memory_recall.",
+                },
+            },
+            "required": ["id"],
+        },
+    },
+
     # ── LOAD SKILL (lazy-load playbooks from the workspace) ─────────
     {
         "name": "load_skill",
@@ -347,7 +418,11 @@ def get_tools_for_tier(tier: str) -> List[Dict[str, Any]]:
     pro   → all tools
     power → all tools
     """
-    basic_tools = {"file_operation", "app_control", "system_info", "memory_search", "web_search", "screen_control", "load_skill"}
+    basic_tools = {
+        "file_operation", "app_control", "system_info",
+        "memory_search", "memory_recall", "memory_save", "memory_forget",
+        "web_search", "screen_control", "load_skill",
+    }
 
     if tier == "free":
         return [t for t in UBONGO_TOOLS if t["name"] in basic_tools]

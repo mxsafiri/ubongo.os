@@ -32,6 +32,7 @@ from assistant_cli.core.workspace import (
     assemble_system_prompt,
     find_skill,
 )
+from assistant_cli.core.semantic_memory import SemanticMemory
 from assistant_cli.providers.base import AIResponse, ToolCall
 from assistant_cli.providers.tool_definitions import get_tools_for_tier
 from assistant_cli.utils.logger import logger
@@ -56,6 +57,7 @@ def run_turn(
     *,
     history:        Optional[List[Dict[str, Any]]] = None,
     workspace:      Optional[Workspace]            = None,
+    memory:         Optional[SemanticMemory]       = None,
     extra_system:   Optional[str]                  = None,
     tool_executor:  Optional[ToolExecutor]         = None,
     max_steps:      int                            = 8,
@@ -84,6 +86,7 @@ def run_turn(
         Safety cap on tool calls per turn.
     """
     ws       = workspace or load_workspace()
+    mem      = memory or SemanticMemory(ws.episodic_dir)
     history  = history if history is not None else []
     tier     = getattr(settings, "effective_tier", None) or getattr(settings, "user_tier", "free")
     tools    = get_tools_for_tier(tier)
@@ -137,7 +140,7 @@ def run_turn(
         # Execute each tool call requested this turn, then loop.
         pending_tool_results = []
         for call in response.tool_calls:
-            result = _dispatch_tool(call, ws=ws, tool_executor=tool_executor)
+            result = _dispatch_tool(call, ws=ws, memory=mem, tool_executor=tool_executor)
             pending_tool_results.append({"id": call.id, "name": call.name, "result": result})
             tool_log.append({
                 "step":   step,
@@ -168,11 +171,18 @@ def _dispatch_tool(
     call: ToolCall,
     *,
     ws: Workspace,
+    memory: SemanticMemory,
     tool_executor: Optional[ToolExecutor],
 ) -> Any:
     """Route a tool call to a workspace built-in, then to the executor."""
     if call.name == "load_skill":
         return _tool_load_skill(call.input, ws)
+    if call.name == "memory_recall":
+        return _tool_memory_recall(call.input, memory)
+    if call.name == "memory_save":
+        return _tool_memory_save(call.input, memory)
+    if call.name == "memory_forget":
+        return _tool_memory_forget(call.input, memory)
 
     if tool_executor is None:
         return {
@@ -187,6 +197,42 @@ def _dispatch_tool(
     except Exception as exc:
         logger.warning("agent_loop: tool '%s' raised: %s", call.name, exc)
         return {"error": f"Tool '{call.name}' failed: {exc}"}
+
+
+def _tool_memory_recall(payload: Dict[str, Any], mem: SemanticMemory) -> Dict[str, Any]:
+    p = payload or {}
+    query = str(p.get("query", "") or "")
+    try:
+        limit = int(p.get("limit", 8))
+    except (TypeError, ValueError):
+        limit = 8
+
+    facts = mem.recall(query, limit=limit)
+    return {
+        "query":       query,
+        "total_facts": mem.count(),
+        "results":     [f.to_dict() for f in facts],
+    }
+
+
+def _tool_memory_save(payload: Dict[str, Any], mem: SemanticMemory) -> Dict[str, Any]:
+    p = payload or {}
+    text = str(p.get("text", "") or "").strip()
+    if not text:
+        return {"error": "memory_save requires non-empty 'text'."}
+    tags = str(p.get("tags", "") or "")
+    fact = mem.save(text, tags=tags, source="agent")
+    return {"saved": True, "fact": fact.to_dict()}
+
+
+def _tool_memory_forget(payload: Dict[str, Any], mem: SemanticMemory) -> Dict[str, Any]:
+    p = payload or {}
+    try:
+        fact_id = int(p.get("id"))
+    except (TypeError, ValueError):
+        return {"error": "memory_forget requires an integer 'id'."}
+    removed = mem.forget(fact_id)
+    return {"forgotten": removed, "id": fact_id}
 
 
 def _tool_load_skill(payload: Dict[str, Any], ws: Workspace) -> Dict[str, Any]:

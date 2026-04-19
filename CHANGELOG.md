@@ -5,6 +5,28 @@ All notable changes to Ubongo OS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-04-19
+
+### Added — Semantic memory tier
+
+Phase 4 of the autonomous agent OS plan. Ubongo can now *ask* for
+context instead of us stuffing it every turn.
+
+- **`SemanticMemory`** — stdlib SQLite store at `~/.ubongo/memory/semantic.db`.
+  Zero new deps; WAL journal; keyword-scored recall (token overlap + recency).
+- **Three new tools** wired into the agent loop: `memory_save`, `memory_recall`,
+  `memory_forget`. The model can now persist and retrieve facts on demand.
+- **`append_daily_note()`** — writes timestamped entries to
+  `~/.ubongo/memory/YYYY-MM-DD.md` (episodic tier). Not injected into the
+  prompt — the model reads on demand via file tools when needed.
+- 6 more smoke tests (15 total); ruff clean across the board.
+
+### Why
+Krentsel's three-tier memory model: short-term (history) + semantic (facts)
++ episodic (daily logs). Previously Ubongo only had short-term; everything
+else had to be hand-copied into MEMORY.md. Now the agent owns its own
+long-term memory.
+
 ## [0.5.0] - 2026-04-19
 
 ### Added — Workspace-as-Kernel + ReAct loop

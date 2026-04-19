@@ -14,6 +14,7 @@ from assistant_cli.core.workspace import (
     find_skill,
 )
 from assistant_cli.core.agent_loop import run_turn
+from assistant_cli.core.semantic_memory import SemanticMemory, append_daily_note
 from assistant_cli.providers.base import AIResponse, ToolCall
 
 
@@ -169,6 +170,104 @@ def test_run_turn_respects_max_steps() -> None:
     assert len(turn.tool_log) == 3
 
 
+# ── semantic memory tests ─────────────────────────────────────────────
+
+def test_semantic_memory_save_and_recall(tmp_path: Path) -> None:
+    mem = SemanticMemory(tmp_path)
+    mem.save("user prefers Arc over Chrome",      tags="browser preference")
+    mem.save("daily notes live in ~/Documents",   tags="filesystem")
+    mem.save("standup is 9am on Mondays",         tags="calendar routine")
+    mem.close()
+
+    mem2 = SemanticMemory(tmp_path)
+    assert mem2.count() == 3
+
+    hits = mem2.recall("browser")
+    assert len(hits) == 1
+    assert "Arc" in hits[0].text
+
+    all_recent = mem2.recall("")
+    assert [f.text for f in all_recent][0] == "standup is 9am on Mondays"
+
+
+def test_semantic_memory_forget(tmp_path: Path) -> None:
+    mem = SemanticMemory(tmp_path)
+    f = mem.save("ephemeral fact", tags="temp")
+    assert mem.count() == 1
+    assert mem.forget(f.id) is True
+    assert mem.count() == 0
+    assert mem.forget(f.id) is False
+
+
+def test_recall_ranks_by_token_matches(tmp_path: Path) -> None:
+    mem = SemanticMemory(tmp_path)
+    mem.save("python script runs on every boot",  tags="automation")
+    mem.save("python is the primary language",    tags="")
+    mem.save("vim is my editor",                  tags="")
+
+    hits = mem.recall("python language")
+    assert hits[0].text == "python is the primary language"
+
+
+def test_run_turn_memory_recall_tool(tmp_path: Path) -> None:
+    ws_dir  = tmp_path / "ws"
+    mem_dir = tmp_path / "mem"
+    ensure_workspace(ws_dir)
+    ws = load_workspace(ws_dir)
+
+    mem = SemanticMemory(mem_dir)
+    mem.save("the user's laptop is a MacBook Pro M2", tags="hardware")
+
+    provider = FakeProvider([
+        AIResponse(
+            content="",
+            tool_calls=[ToolCall(id="t1", name="memory_recall", input={"query": "laptop"})],
+            stop_reason="tool_use",
+        ),
+        AIResponse(content="It's a MacBook Pro M2.", stop_reason="end_turn"),
+    ])
+    turn = run_turn("what's my laptop?", provider, workspace=ws, memory=mem)
+
+    assert turn.final_text == "It's a MacBook Pro M2."
+    assert len(turn.tool_log) == 1
+    assert turn.tool_log[0]["name"] == "memory_recall"
+
+
+def test_run_turn_memory_save_tool(tmp_path: Path) -> None:
+    ws_dir  = tmp_path / "ws"
+    mem_dir = tmp_path / "mem"
+    ensure_workspace(ws_dir)
+    ws = load_workspace(ws_dir)
+    mem = SemanticMemory(mem_dir)
+
+    provider = FakeProvider([
+        AIResponse(
+            content="",
+            tool_calls=[ToolCall(
+                id="t1", name="memory_save",
+                input={"text": "user's standup is at 9am Mondays", "tags": "calendar"},
+            )],
+            stop_reason="tool_use",
+        ),
+        AIResponse(content="Got it — saved.", stop_reason="end_turn"),
+    ])
+    turn = run_turn("remember: standup is 9am Mondays", provider, workspace=ws, memory=mem)
+
+    assert turn.final_text == "Got it — saved."
+    assert mem.count() == 1
+    assert "standup" in mem.all()[0].text
+
+
+def test_append_daily_note_creates_and_appends(tmp_path: Path) -> None:
+    p1 = append_daily_note("opened the app", root=tmp_path)
+    p2 = append_daily_note("ran three tool calls", root=tmp_path)
+    assert p1 == p2
+    body = p1.read_text(encoding="utf-8")
+    assert "opened the app" in body
+    assert "ran three tool calls" in body
+    assert body.startswith("# ")   # has a date header
+
+
 # ── manual runner ──────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -184,6 +283,12 @@ if __name__ == "__main__":
         ("run_turn_executes_load_skill_tool",   test_run_turn_executes_load_skill_tool),
         ("run_turn_routes_unknown_tool",        test_run_turn_routes_unknown_tool_to_executor),
         ("run_turn_respects_max_steps",         test_run_turn_respects_max_steps),
+        ("semantic_memory_save_and_recall",     test_semantic_memory_save_and_recall),
+        ("semantic_memory_forget",              test_semantic_memory_forget),
+        ("recall_ranks_by_token_matches",       test_recall_ranks_by_token_matches),
+        ("run_turn_memory_recall_tool",         test_run_turn_memory_recall_tool),
+        ("run_turn_memory_save_tool",           test_run_turn_memory_save_tool),
+        ("append_daily_note_creates_and_appends", test_append_daily_note_creates_and_appends),
     ]
     for name, fn in tests:
         try:
