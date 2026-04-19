@@ -5,6 +5,39 @@ All notable changes to Ubongo OS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-04-19
+
+### Added — Sandboxing tiers
+
+Phase 5 of the autonomous agent OS plan. Every tool call now runs
+through a policy that classifies it by risk and decides whether to
+allow, require review, or block.
+
+- **`SandboxPolicy`** with three tiers: `TRUSTED` (full privilege,
+  primary user session), `REVIEW` (read-only passes; writes/network/
+  control ask first), `UNTRUSTED` (deny-by-default; only SAFE tools
+  run — for webhook- or chat-triggered sessions where input isn't from
+  the primary user).
+- **Risk classification** — `SAFE`, `WRITE`, `DESTRUCTIVE`, `NETWORK`,
+  `CONTROL`. Multi-action tools (`file_operation`, `screen_control`)
+  resolve risk per-action, so `search_files` and `screenshot` stay
+  SAFE while `delete_item` is DESTRUCTIVE.
+- **Approver pattern** — pluggable callable (`always_allow`,
+  `always_deny`, `cli_approver`) runs when a tool hits `REQUIRE_REVIEW`.
+  Non-interactive sessions default to deny.
+- **Per-session overrides** — `policy.allow` / `policy.deny` let a
+  specific session elevate or lock out individual tools.
+- **Agent loop** now classifies every tool call before dispatch.
+  Denied calls return a `{"blocked": True, ...}` result the model can
+  see and recover from; tool log records risk + decision for audit.
+- 11 more smoke tests (26 total); ruff clean.
+
+### Why
+Krentsel: every agent that can call tools is "insecure by default"
+unless the harness gates execution. With cron/webhook autonomy landing
+next, Ubongo needs the policy surface *before* input channels that
+aren't the primary user's keyboard go live.
+
 ## [0.5.1] - 2026-04-19
 
 ### Added — Semantic memory tier

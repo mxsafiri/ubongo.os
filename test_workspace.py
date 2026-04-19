@@ -15,6 +15,14 @@ from assistant_cli.core.workspace import (
 )
 from assistant_cli.core.agent_loop import run_turn
 from assistant_cli.core.semantic_memory import SemanticMemory, append_daily_note
+from assistant_cli.core.sandbox import (
+    SandboxPolicy,
+    SandboxDecision,
+    RiskLevel,
+    ApprovalRequest,
+    always_allow,
+    always_deny,
+)
 from assistant_cli.providers.base import AIResponse, ToolCall
 
 
@@ -268,6 +276,172 @@ def test_append_daily_note_creates_and_appends(tmp_path: Path) -> None:
     assert body.startswith("# ")   # has a date header
 
 
+# ── sandbox tests ─────────────────────────────────────────────────────
+
+def test_sandbox_trusted_allows_everything() -> None:
+    p = SandboxPolicy.trusted()
+    d, r, _ = p.classify("file_operation", {"action": "delete_item"})
+    assert d == SandboxDecision.ALLOW
+    assert r == RiskLevel.DESTRUCTIVE
+
+    d, _, _ = p.classify("web_search", {"query": "x"})
+    assert d == SandboxDecision.ALLOW
+
+
+def test_sandbox_review_passes_safe_blocks_write() -> None:
+    p = SandboxPolicy.review()
+    d, r, _ = p.classify("memory_recall", {})
+    assert d == SandboxDecision.ALLOW and r == RiskLevel.SAFE
+
+    d, r, _ = p.classify("memory_save", {"text": "x"})
+    assert d == SandboxDecision.REQUIRE_REVIEW and r == RiskLevel.WRITE
+
+    d, r, _ = p.classify("file_operation", {"action": "delete_item"})
+    assert d == SandboxDecision.REQUIRE_REVIEW and r == RiskLevel.DESTRUCTIVE
+
+
+def test_sandbox_untrusted_denies_by_default() -> None:
+    p = SandboxPolicy.untrusted()
+    d, _, _ = p.classify("file_operation", {"action": "create_folder"})
+    assert d == SandboxDecision.DENY
+
+    d, _, _ = p.classify("memory_recall", {})
+    assert d == SandboxDecision.ALLOW  # SAFE passes even in untrusted
+
+
+def test_sandbox_allow_override() -> None:
+    p = SandboxPolicy.untrusted(allow={"web_search"})
+    d, _, _ = p.classify("web_search", {"query": "x"})
+    assert d == SandboxDecision.ALLOW
+
+
+def test_sandbox_deny_override() -> None:
+    p = SandboxPolicy.trusted()
+    p.deny.add("file_operation")
+    d, _, _ = p.classify("file_operation", {"action": "create_folder"})
+    assert d == SandboxDecision.DENY
+
+
+def test_sandbox_file_search_is_safe() -> None:
+    p = SandboxPolicy.review()
+    d, r, _ = p.classify("file_operation", {"action": "search_files"})
+    assert d == SandboxDecision.ALLOW and r == RiskLevel.SAFE
+
+
+def test_sandbox_screen_screenshot_is_safe() -> None:
+    p = SandboxPolicy.review()
+    d, r, _ = p.classify("screen_control", {"action": "screenshot"})
+    assert d == SandboxDecision.ALLOW and r == RiskLevel.SAFE
+
+    d, r, _ = p.classify("screen_control", {"action": "click", "x": 0, "y": 0})
+    assert d == SandboxDecision.REQUIRE_REVIEW and r == RiskLevel.CONTROL
+
+
+def test_run_turn_blocks_under_untrusted(tmp_path: Path) -> None:
+    ws_dir  = tmp_path / "ws"
+    mem_dir = tmp_path / "mem"
+    ensure_workspace(ws_dir)
+    ws  = load_workspace(ws_dir)
+    mem = SemanticMemory(mem_dir)
+
+    calls: list[str] = []
+
+    def exec_tool(name, payload):
+        calls.append(name)
+        return {"ran": True}
+
+    provider = FakeProvider([
+        AIResponse(
+            content="",
+            tool_calls=[ToolCall(id="t1", name="file_operation", input={"action": "create_folder", "name": "x"})],
+            stop_reason="tool_use",
+        ),
+        AIResponse(content="OK, I couldn't run that.", stop_reason="end_turn"),
+    ])
+    turn = run_turn(
+        "make a folder",
+        provider,
+        workspace=ws,
+        memory=mem,
+        tool_executor=exec_tool,
+        sandbox=SandboxPolicy.untrusted(),
+    )
+
+    assert calls == []                          # executor never invoked
+    assert turn.tool_log[0]["decision"] == "deny"
+    assert turn.tool_log[0]["risk"] == "write"
+
+
+def test_run_turn_review_with_approver(tmp_path: Path) -> None:
+    ws_dir  = tmp_path / "ws"
+    mem_dir = tmp_path / "mem"
+    ensure_workspace(ws_dir)
+    ws  = load_workspace(ws_dir)
+    mem = SemanticMemory(mem_dir)
+
+    approved: list[ApprovalRequest] = []
+
+    def approver(req: ApprovalRequest) -> bool:
+        approved.append(req)
+        return True
+
+    provider = FakeProvider([
+        AIResponse(
+            content="",
+            tool_calls=[ToolCall(id="t1", name="memory_save", input={"text": "hello"})],
+            stop_reason="tool_use",
+        ),
+        AIResponse(content="saved.", stop_reason="end_turn"),
+    ])
+    turn = run_turn(
+        "remember hello",
+        provider,
+        workspace=ws,
+        memory=mem,
+        sandbox=SandboxPolicy.review(),
+        approver=approver,
+    )
+
+    assert len(approved) == 1
+    assert approved[0].tool_name == "memory_save"
+    assert turn.final_text == "saved."
+    assert mem.count() == 1
+
+
+def test_run_turn_review_without_approver_denies(tmp_path: Path) -> None:
+    ws_dir  = tmp_path / "ws"
+    mem_dir = tmp_path / "mem"
+    ensure_workspace(ws_dir)
+    ws  = load_workspace(ws_dir)
+    mem = SemanticMemory(mem_dir)
+
+    provider = FakeProvider([
+        AIResponse(
+            content="",
+            tool_calls=[ToolCall(id="t1", name="memory_save", input={"text": "nope"})],
+            stop_reason="tool_use",
+        ),
+        AIResponse(content="can't do that.", stop_reason="end_turn"),
+    ])
+    turn = run_turn(
+        "remember nope",
+        provider,
+        workspace=ws,
+        memory=mem,
+        sandbox=SandboxPolicy.review(),
+        # no approver → default always_deny → blocked
+    )
+
+    assert mem.count() == 0
+    assert turn.tool_log[0]["decision"] == "deny"
+
+
+def test_always_allow_and_deny() -> None:
+    req = ApprovalRequest("x", {}, RiskLevel.WRITE, "test")
+    assert always_allow(req) is True
+    assert always_deny(req)  is False
+
+
 # ── manual runner ──────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -289,6 +463,17 @@ if __name__ == "__main__":
         ("run_turn_memory_recall_tool",         test_run_turn_memory_recall_tool),
         ("run_turn_memory_save_tool",           test_run_turn_memory_save_tool),
         ("append_daily_note_creates_and_appends", test_append_daily_note_creates_and_appends),
+        ("sandbox_trusted_allows_everything",   test_sandbox_trusted_allows_everything),
+        ("sandbox_review_passes_safe_blocks_write", test_sandbox_review_passes_safe_blocks_write),
+        ("sandbox_untrusted_denies_by_default", test_sandbox_untrusted_denies_by_default),
+        ("sandbox_allow_override",              test_sandbox_allow_override),
+        ("sandbox_deny_override",               test_sandbox_deny_override),
+        ("sandbox_file_search_is_safe",         test_sandbox_file_search_is_safe),
+        ("sandbox_screen_screenshot_is_safe",   test_sandbox_screen_screenshot_is_safe),
+        ("run_turn_blocks_under_untrusted",     test_run_turn_blocks_under_untrusted),
+        ("run_turn_review_with_approver",       test_run_turn_review_with_approver),
+        ("run_turn_review_without_approver_denies", test_run_turn_review_without_approver_denies),
+        ("always_allow_and_deny",               test_always_allow_and_deny),
     ]
     for name, fn in tests:
         try:

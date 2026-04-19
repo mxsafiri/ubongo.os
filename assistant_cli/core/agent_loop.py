@@ -33,6 +33,13 @@ from assistant_cli.core.workspace import (
     find_skill,
 )
 from assistant_cli.core.semantic_memory import SemanticMemory
+from assistant_cli.core.sandbox import (
+    SandboxPolicy,
+    SandboxDecision,
+    ApprovalRequest,
+    Approver,
+    always_deny,
+)
 from assistant_cli.providers.base import AIResponse, ToolCall
 from assistant_cli.providers.tool_definitions import get_tools_for_tier
 from assistant_cli.utils.logger import logger
@@ -60,6 +67,8 @@ def run_turn(
     memory:         Optional[SemanticMemory]       = None,
     extra_system:   Optional[str]                  = None,
     tool_executor:  Optional[ToolExecutor]         = None,
+    sandbox:        Optional[SandboxPolicy]        = None,
+    approver:       Optional[Approver]             = None,
     max_steps:      int                            = 8,
 ) -> AgentTurn:
     """
@@ -90,6 +99,8 @@ def run_turn(
     history  = history if history is not None else []
     tier     = getattr(settings, "effective_tier", None) or getattr(settings, "user_tier", "free")
     tools    = get_tools_for_tier(tier)
+    policy   = sandbox  or SandboxPolicy.trusted()
+    approve  = approver or always_deny
 
     sys_prompt = assemble_system_prompt(ws)
     if extra_system:
@@ -140,13 +151,40 @@ def run_turn(
         # Execute each tool call requested this turn, then loop.
         pending_tool_results = []
         for call in response.tool_calls:
-            result = _dispatch_tool(call, ws=ws, memory=mem, tool_executor=tool_executor)
+            decision, risk, reason = policy.classify(call.name, call.input or {})
+
+            if decision == SandboxDecision.REQUIRE_REVIEW:
+                request = ApprovalRequest(
+                    tool_name  = call.name,
+                    tool_input = call.input or {},
+                    risk       = risk,
+                    reason     = reason,
+                )
+                if approve(request):
+                    decision = SandboxDecision.ALLOW
+                else:
+                    decision = SandboxDecision.DENY
+                    reason   = "approver denied"
+
+            if decision == SandboxDecision.DENY:
+                result = {
+                    "blocked": True,
+                    "tool":    call.name,
+                    "risk":    risk.value,
+                    "reason":  reason,
+                }
+                logger.info("agent_loop: blocked %s (%s) — %s", call.name, risk.value, reason)
+            else:
+                result = _dispatch_tool(call, ws=ws, memory=mem, tool_executor=tool_executor)
+
             pending_tool_results.append({"id": call.id, "name": call.name, "result": result})
             tool_log.append({
-                "step":   step,
-                "name":   call.name,
-                "input":  call.input,
-                "result": _truncate(result),
+                "step":     step,
+                "name":     call.name,
+                "input":    call.input,
+                "risk":     risk.value,
+                "decision": decision.value,
+                "result":   _truncate(result),
             })
 
         # Hand the tool outputs back to the model on the next iteration.

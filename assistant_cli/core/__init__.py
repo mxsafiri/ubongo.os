@@ -13,6 +13,16 @@ from assistant_cli.core.semantic_memory import (
     Fact,
     append_daily_note,
 )
+from assistant_cli.core.sandbox import (
+    SandboxPolicy,
+    SandboxTier,
+    SandboxDecision,
+    RiskLevel,
+    ApprovalRequest,
+    always_allow,
+    always_deny,
+    cli_approver,
+)
 
 __all__ = [
     "IntentParser",
@@ -27,4 +37,12 @@ __all__ = [
     "SemanticMemory",
     "Fact",
     "append_daily_note",
+    "SandboxPolicy",
+    "SandboxTier",
+    "SandboxDecision",
+    "RiskLevel",
+    "ApprovalRequest",
+    "always_allow",
+    "always_deny",
+    "cli_approver",
 ]
