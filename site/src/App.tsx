@@ -355,12 +355,11 @@ export default function App() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.4, duration: 0.6, ease: [0.25, 0.1, 0, 1] }}
               >
-                YOUR WORK,
-                <br />
+                GET YOUR{' '}
                 <LayoutGroup>
-                  <motion.span layout className="inline-flex mt-1">
+                  <motion.span layout className="inline-flex">
                     <TextRotate
-                      texts={['UNBLOCKED.', 'ACCELERATED.', 'UNLOCKED.', 'SIMPLIFIED.']}
+                      texts={['HOURS', 'FOCUS', 'DAY', 'FLOW', 'EVENINGS']}
                       mainClassName="overflow-hidden"
                       elementLevelClassName="accent-text"
                       staggerDuration={0.02}
@@ -370,6 +369,8 @@ export default function App() {
                     />
                   </motion.span>
                 </LayoutGroup>
+                <br />
+                BACK.
               </motion.h1>
             </motion.div>
 
