@@ -433,7 +433,7 @@ export default function App() {
         {/* Ambient video — same treatment as hero */}
         <div className="section-video" aria-hidden>
           <video
-            className="hero-video"
+            className="hero-video hero-video--color"
             src="/download-bg.mp4"
             autoPlay
             loop
