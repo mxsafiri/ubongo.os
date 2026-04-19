@@ -147,8 +147,16 @@ body {
 }
 
 /* ═══════════════════════════════════════════
-   HERO AMBIENT VIDEO
+   HERO / SECTION AMBIENT VIDEO
    ═══════════════════════════════════════════ */
+
+.section-video {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 0;
+}
 
 .hero-video {
   position: absolute;

@@ -429,7 +429,24 @@ export default function App() {
       <ScrollLine />
 
       {/* ═══ DOWNLOAD ═══ */}
-      <section id="download" className="py-20 px-6 max-w-5xl mx-auto">
+      <section id="download" className="relative py-20 px-6 overflow-hidden">
+        {/* Ambient video — same treatment as hero */}
+        <div className="section-video" aria-hidden>
+          <video
+            className="hero-video"
+            src="/download-bg.mp4"
+            autoPlay
+            loop
+            muted
+            playsInline
+            preload="auto"
+          />
+          <div className="hero-video__tint" />
+          <div className="hero-video__vignette" />
+          <div className="hero-video__fade" />
+        </div>
+
+        <div className="relative z-10 max-w-5xl mx-auto">
         <SectionLabel num="002" label="DOWNLOAD" />
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-lg">
@@ -461,6 +478,7 @@ export default function App() {
               <div className="btn-ghost w-full px-4 py-2.5 text-[11px] tracking-wider cursor-not-allowed" style={{ opacity: 0.5 }}>NOTIFY ME</div>
             </div>
           </Reveal>
+        </div>
         </div>
       </section>
 
