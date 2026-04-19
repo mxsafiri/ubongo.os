@@ -1,0 +1,62 @@
+{
+  "$schema":    "https://schema.tauri.app/config/2",
+  "productName": "ubongo",
+  "version":     "0.4.0",
+  "identifier":  "ai.ubongo.desktop",
+
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+
+  "app": {
+    "withGlobalTauri": true,
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label":       "main",
+        "title":       "ubongo",
+        "url":         "/",
+
+        "width":       960,
+        "height":      580,
+        "minWidth":    800,
+        "minHeight":   400,
+
+        "resizable":        true,
+        "decorations":      false,
+        "transparent":      true,
+        "alwaysOnTop":      false,
+        "skipTaskbar":      true,
+        "center":           true,
+        "visible":          true,
+        "shadow":           false,
+        "focus":            true,
+
+        "hiddenTitle":      true,
+        "titleBarStyle":    "Transparent"
+      }
+    ],
+    "trayIcon": {
+      "id":          "tray",
+      "iconPath":    "icons/tray.png",
+      "iconAsTemplate": true,
+      "tooltip":     "ubongo"
+    }
+  },
+
+  "bundle": {
+    "active":     true,
+    "targets":    "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png"
+    ],
+    "resources": {
+      "binaries/ubongo-server": "ubongo-server"
+    }
+  }
+}

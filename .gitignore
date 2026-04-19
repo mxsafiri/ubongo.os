@@ -49,9 +49,19 @@ logs/
 memory/
 cache/
 
+# Node / Frontend
+node_modules/
+dist/
+.next/
+out/
+
+# Rust / Tauri
+target/
+desktop/src-tauri/target/
+desktop/src-tauri/binaries/
+
 # Build artifacts
 build/
-dist/
 
 # Environment variables
 .env
