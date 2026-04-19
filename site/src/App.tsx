@@ -372,6 +372,18 @@ export default function App() {
                 <br />
                 BACK.
               </motion.h1>
+
+              {/* Bridge line — names the mechanism */}
+              <motion.p
+                className="font-mono text-[13px] sm:text-[14px] leading-relaxed mb-6 max-w-md"
+                style={{ color: 'var(--text-muted)' }}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.6, duration: 0.5, ease: [0.25, 0.1, 0, 1] }}
+              >
+                Put your computer to work.{' '}
+                <span style={{ color: 'var(--text-strong)' }}>Just say the word.</span>
+              </motion.p>
             </motion.div>
 
             {/* Layer 3: Terminal (inverse parallax — moves slightly down, feels closer) */}
