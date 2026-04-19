@@ -219,6 +219,8 @@ export default function App() {
   const { scrollYProgress, scrollY } = useScroll()
 
   // Hero parallax layers (different speeds = depth)
+  const videoY = useTransform(scrollY, [0, 600], [0, -40])
+  const videoScale = useTransform(scrollY, [0, 600], [1, 1.08])
   const gridY = useTransform(scrollY, [0, 600], [0, -80])
   const headlineY = useTransform(scrollY, [0, 600], [0, -40])
   const terminalY = useTransform(scrollY, [0, 600], [0, 20])
@@ -299,8 +301,29 @@ export default function App() {
         </div>
       </nav>
 
-      {/* ═══ HERO — 3 parallax layers ═══ */}
+      {/* ═══ HERO — 4 parallax layers ═══ */}
       <section className="relative min-h-screen flex items-center pt-12 overflow-hidden">
+        {/* Layer 0: Ambient video (deepest, slowest parallax) */}
+        <motion.div
+          className="absolute inset-0 overflow-hidden pointer-events-none"
+          style={{ y: videoY, scale: videoScale }}
+          aria-hidden
+        >
+          <video
+            className="hero-video"
+            src="/hero-bg.mp4"
+            autoPlay
+            loop
+            muted
+            playsInline
+            preload="auto"
+          />
+          {/* Blend masks: bottom fade + vignette + tint */}
+          <div className="hero-video__tint" />
+          <div className="hero-video__vignette" />
+          <div className="hero-video__fade" />
+        </motion.div>
+
         {/* Layer 1: Grid (fastest parallax — recedes first) */}
         <motion.div className="absolute inset-0" style={{ y: gridY }}>
           <StaggerGrid />
