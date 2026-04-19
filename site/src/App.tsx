@@ -312,11 +312,10 @@ export default function App() {
           <video
             className="hero-video"
             src="/hero-bg.mp4"
-            autoPlay
-            loop
             muted
             playsInline
             preload="auto"
+            onLoadedMetadata={(e) => { const v = e.currentTarget; v.currentTime = 0.5; v.pause(); }}
           />
           {/* Blend masks: bottom fade + vignette + tint */}
           <div className="hero-video__tint" />
