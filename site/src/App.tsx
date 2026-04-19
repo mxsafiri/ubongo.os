@@ -419,7 +419,7 @@ export default function App() {
               </div>
               <div className="text-[10px] font-mono mb-1" style={{ color: 'var(--text-faint)' }}>Apple Silicon (M1+)</div>
               <div className="text-[9px] font-mono mb-4" style={{ color: 'var(--text-faint)' }}>v0.4.0 &middot; 138 MB</div>
-              <a href="https://github.com/ubongo-ai/ubongo/releases/latest/download/ubongo_0.4.0_aarch64.dmg" className="btn-primary w-full px-4 py-2.5 text-[11px] tracking-wider">
+              <a href="https://github.com/mxsafiri/ubongo.os/releases/latest/download/ubongo_0.4.0_aarch64.dmg" className="btn-primary w-full px-4 py-2.5 text-[11px] tracking-wider">
                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14m7-7l-7 7-7-7" /></svg>
                 DOWNLOAD .DMG
               </a>
