@@ -12,7 +12,7 @@ Provides equivalent functionality to AppleScriptAutomation for Windows:
 import subprocess
 import platform
 import os
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 from pathlib import Path
 from assistant_cli.models import ExecutionResult
 from assistant_cli.utils import logger

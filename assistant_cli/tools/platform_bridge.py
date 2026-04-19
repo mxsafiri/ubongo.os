@@ -9,7 +9,6 @@ Usage:
 """
 
 import platform
-from typing import Optional
 from assistant_cli.utils import logger
 
 
@@ -100,7 +99,7 @@ class _LinuxFallback:
         from assistant_cli.models import ExecutionResult
         try:
             self._subprocess.Popen(["espeak", text])
-            return ExecutionResult(success=True, message=f"🔊 Speaking...")
+            return ExecutionResult(success=True, message="🔊 Speaking...")
         except Exception:
             return self._not_supported("Text-to-speech")
 

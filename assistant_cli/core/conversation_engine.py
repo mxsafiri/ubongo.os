@@ -10,9 +10,8 @@ Architecture:
 
 from __future__ import annotations
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from dataclasses import dataclass, field
-from datetime import datetime
 from assistant_cli.models import Intent, ParsedCommand, ExecutionResult
 from assistant_cli.core.llm_client import LLMClient
 from assistant_cli.core.quick_answer import quick_answer
@@ -633,7 +632,6 @@ class ConversationEngine:
     # ── self-awareness (instant, no LLM) ─────────────────────────
     def _check_self_awareness(self, lower: str) -> Optional[str]:
         """Instant answers to questions about the assistant itself."""
-        llm_status = "online" if self.llm.available else "offline"
         model_name = self.llm.model if self.llm.available else "none"
 
         # "are you online / offline / connected"
@@ -919,7 +917,7 @@ class ConversationEngine:
                 lines.append(f"  • {ext}: {count} files")
 
         # Show sample file names
-        lines.append(f"\nSample files:")
+        lines.append("\nSample files:")
         for f in sample[:15]:
             name = Path(f).name
             lines.append(f"  • {name}")
@@ -955,8 +953,8 @@ class ConversationEngine:
         # Questions about what was created
         if last == Intent.CREATE_FOLDER:
             return (
-                f"I created a folder for you. "
-                f"Want me to move files into it, or do something else?"
+                "I created a folder for you. "
+                "Want me to move files into it, or do something else?"
             )
 
         # Questions after sorting

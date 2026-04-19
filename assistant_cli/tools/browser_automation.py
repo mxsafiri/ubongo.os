@@ -6,13 +6,13 @@ with web applications like Canva, Google Docs, Gmail, etc.
 """
 
 import time
-from typing import Optional, Dict, Any, List
+from typing import Optional, Any
 from pathlib import Path
 from assistant_cli.models import ExecutionResult
 from assistant_cli.utils import logger
 
 try:
-    from playwright.sync_api import sync_playwright, Browser, Page, BrowserContext
+    from playwright.sync_api import sync_playwright
     HAS_PLAYWRIGHT = True
 except ImportError:
     HAS_PLAYWRIGHT = False
@@ -310,7 +310,7 @@ class BrowserAutomation:
                 # Go directly to new doc
                 self._page.goto("https://docs.google.com/document/create", wait_until="domcontentloaded", timeout=30000)
                 time.sleep(2)
-                msg = f"✓ Opened new Google Doc\n  • You may need to sign in to Google\n  • Tell me what to write!"
+                msg = "✓ Opened new Google Doc\n  • You may need to sign in to Google\n  • Tell me what to write!"
             else:
                 self._page.goto("https://docs.google.com", wait_until="domcontentloaded", timeout=30000)
                 time.sleep(2)

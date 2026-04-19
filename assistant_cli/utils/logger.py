@@ -1,5 +1,4 @@
 import logging
-from pathlib import Path
 from datetime import datetime
 from assistant_cli.config import settings
 

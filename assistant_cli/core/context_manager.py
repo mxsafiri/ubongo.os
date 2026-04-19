@@ -1,7 +1,5 @@
 import sqlite3
-from pathlib import Path
 from typing import List, Optional
-from datetime import datetime
 import uuid
 from assistant_cli.models import ConversationContext, Message, MessageRole
 from assistant_cli.config import settings

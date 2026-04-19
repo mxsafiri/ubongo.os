@@ -7,7 +7,7 @@ No API keys needed. Works fully offline for native apps.
 
 import subprocess
 import platform
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 from assistant_cli.models import ExecutionResult
 from assistant_cli.utils import logger
 

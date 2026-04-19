@@ -1,5 +1,4 @@
 import psutil
-from typing import Dict, Any
 from assistant_cli.models import ExecutionResult
 from assistant_cli.utils import logger
 

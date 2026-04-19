@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional
 import shutil
 from datetime import datetime, timedelta
 from assistant_cli.models import ExecutionResult
@@ -48,7 +48,7 @@ class FileOperations:
             logger.error("Failed to create folder: %s", str(e))
             return ExecutionResult(
                 success=False,
-                message=f"Failed to create folder",
+                message="Failed to create folder",
                 error=str(e)
             )
     

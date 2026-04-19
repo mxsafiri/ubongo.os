@@ -1,5 +1,5 @@
 import re
-from typing import Dict, Optional
+from typing import Dict
 from assistant_cli.core.knowledge_base import CapabilityCatalog
 from assistant_cli.core.llm_client import LLMClient
 

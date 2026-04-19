@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List
 import re
 from assistant_cli.models import Intent, ParsedCommand
 from assistant_cli.utils import logger

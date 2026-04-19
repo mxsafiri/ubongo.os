@@ -8,7 +8,7 @@ Works with ANY application — not limited to apps with AppleScript support.
 import time
 import platform
 from pathlib import Path
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional
 from assistant_cli.models import ExecutionResult
 from assistant_cli.utils import logger
 

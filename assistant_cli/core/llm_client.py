@@ -2,7 +2,6 @@ import ollama
 from typing import Optional, Dict, Any, List
 from assistant_cli.config import settings
 from assistant_cli.utils import logger
-import psutil
 
 class LLMClient:
     """

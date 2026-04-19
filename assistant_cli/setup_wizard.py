@@ -8,10 +8,8 @@ import subprocess
 import sys
 import platform
 import psutil
-from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.markdown import Markdown
@@ -39,7 +37,7 @@ class SetupWizard:
                 )
                 return "Metal" in result.stdout or "GPU" in result.stdout
             return False
-        except:
+        except Exception:
             return False
     
     def display_welcome(self):
@@ -106,7 +104,7 @@ Perfect for regions with expensive internet or unreliable connectivity.
             size = "1.3 GB"
             quality = "Lightweight, fast on low-end hardware"
         
-        console.print(f"💡 Recommended model for your system:", style="bold")
+        console.print("💡 Recommended model for your system:", style="bold")
         console.print(f"   Model: {self.recommended_model}")
         console.print(f"   Size: {size}")
         console.print(f"   Quality: {quality}\n")
@@ -208,7 +206,7 @@ Perfect for regions with expensive internet or unreliable connectivity.
                 console.print(f"\n✓ {model} downloaded successfully!\n", style="green")
                 return True
             else:
-                console.print(f"\n❌ Download failed\n", style="red")
+                console.print("\n❌ Download failed\n", style="red")
                 return False
                 
         except subprocess.CalledProcessError as e:
