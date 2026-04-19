@@ -5,6 +5,31 @@ All notable changes to Ubongo OS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-04-19
+
+### Added — Workspace-as-Kernel + ReAct loop
+
+The agent's identity now lives in editable files under `~/.ubongo/` instead
+of hardcoded Python strings. This is the foundation for autonomy.
+
+- **`~/.ubongo/SOUL.md`** — personality and tone (auto-seeded on first run)
+- **`~/.ubongo/AGENTS.md`** — operational rules + non-negotiables
+- **`~/.ubongo/TOOLS.md`** — per-user tool conventions ("when I say 'my notes'…")
+- **`~/.ubongo/MEMORY.md`** — long-term facts the agent retains across sessions
+- **`~/.ubongo/skills/<name>/SKILL.md`** — task playbooks, **lazy-loaded**:
+  only names + descriptions are injected each turn; the model calls
+  `load_skill` to pull a body when it's relevant, keeping the context window lean.
+- **ReAct agent loop** (`assistant_cli.core.agent_loop.run_turn`) — real
+  Reason→Act→Observe cycle with a max-step safety cap, in place of the prior
+  single-shot chat path.
+- New `load_skill` tool wired into the tool catalogue.
+- Smoke tests under `test_workspace.py` (9 passing).
+
+### Why
+Reverse-engineered from Alex Krentsel's *Principles for Autonomous System
+Design* talk. The five "kernel patterns" — workspace, identity, session
+boundaries, memory tiers, delegation — are now the spine Ubongo will grow on.
+
 ## [0.2.0] - 2026-02-23
 
 ### Added

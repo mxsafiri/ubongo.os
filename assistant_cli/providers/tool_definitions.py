@@ -283,6 +283,28 @@ UBONGO_TOOLS: List[Dict[str, Any]] = [
         },
     },
 
+    # ── LOAD SKILL (lazy-load playbooks from the workspace) ─────────
+    {
+        "name": "load_skill",
+        "description": (
+            "Load the full body of a skill playbook from the user's workspace "
+            "(~/.ubongo/skills/<name>/SKILL.md). Call this when the skills index "
+            "listed in the system prompt contains a skill relevant to the user's "
+            "request. Returns the skill's instructions as text, which you should "
+            "then follow on the next turn."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Skill name, exactly as shown in the skills index.",
+                },
+            },
+            "required": ["name"],
+        },
+    },
+
     # ── CREATE DOCUMENT ──────────────────────────────────────────────
     {
         "name": "create_document",
@@ -325,7 +347,7 @@ def get_tools_for_tier(tier: str) -> List[Dict[str, Any]]:
     pro   → all tools
     power → all tools
     """
-    basic_tools = {"file_operation", "app_control", "system_info", "memory_search", "web_search", "screen_control"}
+    basic_tools = {"file_operation", "app_control", "system_info", "memory_search", "web_search", "screen_control", "load_skill"}
 
     if tier == "free":
         return [t for t in UBONGO_TOOLS if t["name"] in basic_tools]
