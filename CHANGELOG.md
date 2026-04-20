@@ -5,6 +5,37 @@ All notable changes to Ubongo OS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.8] - 2026-04-20
+
+### Added — Typed A2UI event envelope
+
+Every event the Gateway publishes now carries a stable envelope shape.
+Clients (WebSocket subscribers, the Tauri side, future CLIs) can filter,
+correlate, and version without schema-sniffing each payload.
+
+- **New `assistant_cli/core/a2ui.py` module**:
+  - `A2UIEventType` enum — canonical vocabulary for every event
+    (`turn.started`, `turn.completed`, `a2ui.render`, `tool.call`,
+    `tool.result`, `learning.suggestion`, `cron.tick`, `cron.created`,
+    `cron.removed`, `webhook.received`, `session.opened`, `session.closed`,
+    `reflection.logged`).
+  - `A2UIEnvelope` dataclass + `make_envelope()` factory. Stable shape:
+    `{type, v, id, sessionId, correlationId, ts, source, payload}`.
+  - `A2UI_VERSION = 1` — bumps only on breaking shape changes, not on
+    new event types (those are additive).
+- **Gateway rewired**: every `bus.publish(...)` site now goes through
+  `make_envelope(...)`. Covers `turn.started` / `turn.completed` (user +
+  webhook + cron), `webhook.received`, `cron.tick`, and the canvas
+  fan-out (`a2ui.render` with `payload.change` + `payload.artifact`).
+- **Event types renamed on the wire** for consistency with the enum:
+  - `canvas_artifact` → `a2ui.render`
+  - `turn_started`    → `turn.started`
+  - `turn_complete`   → `turn.completed`
+  - `cron_tick`       → `cron.tick`
+  - `webhook_received`→ `webhook.received`
+- 4 new tests: envelope shape, raw-string type allowed for custom
+  sources, id uniqueness, webhook path publishes envelopes.
+
 ## [0.5.7] - 2026-04-20
 
 ### Added — Identity files + learning pipeline

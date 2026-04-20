@@ -41,6 +41,12 @@ from assistant_cli.core.reflection import (
     append_suggestion,
     append_reflection,
 )
+from assistant_cli.core.a2ui import (
+    A2UI_VERSION,
+    A2UIEventType,
+    A2UIEnvelope,
+    make_envelope,
+)
 
 __all__ = [
     "IntentParser",
@@ -77,4 +83,8 @@ __all__ = [
     "LearningSuggestion",
     "append_suggestion",
     "append_reflection",
+    "A2UI_VERSION",
+    "A2UIEventType",
+    "A2UIEnvelope",
+    "make_envelope",
 ]

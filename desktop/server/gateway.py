@@ -38,6 +38,7 @@ from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisco
 from pydantic import BaseModel, Field
 
 from assistant_cli.core import (
+    A2UIEventType,
     AgentTurn,
     Canvas,
     Scheduler,
@@ -46,6 +47,7 @@ from assistant_cli.core import (
     SandboxTier,
     WebhookChannel,
     WebhookRegistry,
+    make_envelope,
     open_session,
 )
 
@@ -147,12 +149,12 @@ class Gateway:
         self.canvas = Canvas(on_change=self._on_canvas_change)
 
     def _on_canvas_change(self, change: str, artifact) -> None:
-        event = {
-            "type":     "canvas_artifact",
-            "change":   change,
-            "artifact": artifact.to_dict(),
-            "ts":       time.time(),
-        }
+        artifact_dict = artifact.to_dict()
+        event = make_envelope(
+            A2UIEventType.A2UI_RENDER,
+            session_id = artifact_dict.get("session_id"),
+            payload    = {"change": change, "artifact": artifact_dict},
+        )
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -271,24 +273,21 @@ class Gateway:
             session = open_session(channel=f"webhook:{name}", policy=ch.policy())
             self._sessions[session.id] = session
 
-            await self.bus.publish({
-                "type":       "webhook_received",
-                "channel":    name,
-                "session_id": session.id,
-                "ts":         time.time(),
-            })
+            await self.bus.publish(make_envelope(
+                A2UIEventType.WEBHOOK_RECEIVED,
+                session_id = session.id,
+                payload    = {"channel": name},
+            ))
 
             turn = await asyncio.to_thread(
                 self.run_turn_fn, prompt, session, self.canvas
             )
 
-            await self.bus.publish({
-                "type":       "turn_complete",
-                "session_id": session.id,
-                "steps":      turn.steps,
-                "stop":       turn.stop,
-                "ts":         time.time(),
-            })
+            await self.bus.publish(make_envelope(
+                A2UIEventType.TURN_COMPLETED,
+                session_id = session.id,
+                payload    = {"steps": turn.steps, "stop": turn.stop},
+            ))
 
             return {
                 "session_id": session.id,
@@ -321,25 +320,24 @@ class Gateway:
                 )
                 self._sessions[session.id] = session
 
-            await self.bus.publish({
-                "type":       "turn_started",
-                "session_id": session.id,
-                "channel":    session.channel,
-                "tier":       session.policy.tier.value,
-                "ts":         time.time(),
-            })
+            await self.bus.publish(make_envelope(
+                A2UIEventType.TURN_STARTED,
+                session_id = session.id,
+                payload    = {
+                    "channel": session.channel,
+                    "tier":    session.policy.tier.value,
+                },
+            ))
 
             turn = await asyncio.to_thread(
                 self.run_turn_fn, prompt, session, self.canvas
             )
 
-            await self.bus.publish({
-                "type":       "turn_complete",
-                "session_id": session.id,
-                "steps":      turn.steps,
-                "stop":       turn.stop,
-                "ts":         time.time(),
-            })
+            await self.bus.publish(make_envelope(
+                A2UIEventType.TURN_COMPLETED,
+                session_id = session.id,
+                payload    = {"steps": turn.steps, "stop": turn.stop},
+            ))
 
             return {
                 "session_id": session.id,
@@ -439,26 +437,25 @@ class Gateway:
             self._sessions[session.id] = session
             session_ids.append(session.id)
 
-            await self.bus.publish({
-                "type":       "cron_tick",
-                "job_id":     job.id,
-                "job_name":   job.name,
-                "session_id": session.id,
-                "ts":         time.time(),
-            })
+            await self.bus.publish(make_envelope(
+                A2UIEventType.CRON_TICK,
+                session_id = session.id,
+                payload    = {"job_id": job.id, "job_name": job.name},
+            ))
 
             turn = await asyncio.to_thread(
                 self.run_turn_fn, job.prompt, session, self.canvas
             )
 
-            await self.bus.publish({
-                "type":       "turn_complete",
-                "session_id": session.id,
-                "job_id":     job.id,
-                "steps":      turn.steps,
-                "stop":       turn.stop,
-                "ts":         time.time(),
-            })
+            await self.bus.publish(make_envelope(
+                A2UIEventType.TURN_COMPLETED,
+                session_id = session.id,
+                payload    = {
+                    "job_id": job.id,
+                    "steps":  turn.steps,
+                    "stop":   turn.stop,
+                },
+            ))
 
             self.scheduler.mark_run(job.id, now=now)
 

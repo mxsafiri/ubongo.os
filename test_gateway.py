@@ -243,20 +243,35 @@ def test_turn_publishes_start_and_complete_events(tmp_path: Path) -> None:
         q = gw.bus.subscribe()
         # Open session first so we can drive the turn in-loop without
         # FastAPI's sync TestClient thread — keeps the queue readable.
-        from assistant_cli.core import SandboxPolicy, SandboxTier, open_session
+        from assistant_cli.core import (
+            A2UIEventType, SandboxPolicy, SandboxTier,
+            make_envelope, open_session,
+        )
         session = open_session(
             channel = "desktop",
             policy  = SandboxPolicy(tier=SandboxTier.TRUSTED),
         )
         gw._sessions[session.id] = session
 
-        await gw.bus.publish({"type": "turn_started", "session_id": session.id})
-        await gw.bus.publish({"type": "turn_complete", "session_id": session.id})
+        await gw.bus.publish(make_envelope(
+            A2UIEventType.TURN_STARTED, session_id=session.id,
+        ))
+        await gw.bus.publish(make_envelope(
+            A2UIEventType.TURN_COMPLETED, session_id=session.id,
+        ))
 
         first  = await asyncio.wait_for(q.get(), timeout=1.0)
         second = await asyncio.wait_for(q.get(), timeout=1.0)
-        assert first["type"]  == "turn_started"
-        assert second["type"] == "turn_complete"
+        assert first["type"]  == "turn.started"
+        assert second["type"] == "turn.completed"
+        # Envelope shape: every event carries v, id, ts, source, payload.
+        for ev in (first, second):
+            assert ev["v"] == 1
+            assert ev["id"].startswith("ev_")
+            assert ev["source"] == "ubongo.gateway"
+            assert ev["sessionId"] == session.id
+            assert isinstance(ev["ts"], float)
+            assert isinstance(ev["payload"], dict)
 
     asyncio.run(scenario())
 
@@ -324,14 +339,75 @@ def test_gateway_canvas_change_publishes_event(tmp_path: Path) -> None:
 
     async def scenario() -> None:
         q = gw.bus.subscribe()
-        gw.canvas.emit(kind="markdown", title="plan", payload={"body": "x"})
+        gw.canvas.emit(kind="markdown", title="plan", payload={"body": "x"}, session_id="sess_plan")
         # on_change runs synchronously and schedules an async publish;
         # yielding lets that task run.
         await asyncio.sleep(0)
         event = await asyncio.wait_for(q.get(), timeout=1.0)
-        assert event["type"] == "canvas_artifact"
-        assert event["change"] == "created"
-        assert event["artifact"]["title"] == "plan"
+        assert event["type"] == "a2ui.render"
+        assert event["sessionId"] == "sess_plan"
+        assert event["payload"]["change"] == "created"
+        assert event["payload"]["artifact"]["title"] == "plan"
+        # Envelope discipline.
+        assert event["v"] == 1
+        assert event["id"].startswith("ev_")
+        assert event["source"] == "ubongo.gateway"
+
+    asyncio.run(scenario())
+
+
+# ── A2UI envelope ────────────────────────────────────────────────────
+
+def test_make_envelope_shape() -> None:
+    from assistant_cli.core import A2UIEventType, make_envelope
+    env = make_envelope(
+        A2UIEventType.TURN_STARTED,
+        session_id     = "sess_1",
+        correlation_id = "corr_1",
+        payload        = {"prompt": "hello"},
+    )
+    assert env["type"]          == "turn.started"
+    assert env["v"]             == 1
+    assert env["sessionId"]     == "sess_1"
+    assert env["correlationId"] == "corr_1"
+    assert env["source"]        == "ubongo.gateway"
+    assert env["payload"]       == {"prompt": "hello"}
+    assert env["id"].startswith("ev_") and len(env["id"]) > 3
+    assert isinstance(env["ts"], float) and env["ts"] > 0
+
+
+def test_make_envelope_accepts_raw_string_type() -> None:
+    """Custom sources can emit types not in the enum."""
+    from assistant_cli.core import make_envelope
+    env = make_envelope("custom.event", payload={"n": 1}, source="tests")
+    assert env["type"]   == "custom.event"
+    assert env["source"] == "tests"
+
+
+def test_envelope_ids_are_unique() -> None:
+    from assistant_cli.core import A2UIEventType, make_envelope
+    ids = {make_envelope(A2UIEventType.TURN_STARTED)["id"] for _ in range(50)}
+    assert len(ids) == 50
+
+
+def test_webhook_publishes_envelope(tmp_path: Path) -> None:
+    gw = _build_gateway(tmp_path)
+    app = _build_app(gw)
+
+    # Subscribe before the request so the envelope lands in the queue.
+    async def scenario() -> None:
+        q = gw.bus.subscribe()
+        with TestClient(app) as client:
+            client.post("/gateway/channels", json={"name": "zap", "tier": "untrusted"})
+            client.post("/webhooks/zap", content="ping")
+
+        seen_types = []
+        while not q.empty():
+            seen_types.append((await q.get())["type"])
+        # webhook.received fires first, turn.completed last; canvas
+        # artefacts from the dummy runner land in between.
+        assert "webhook.received" in seen_types
+        assert "turn.completed"   in seen_types
 
     asyncio.run(scenario())
 
@@ -379,6 +455,10 @@ if __name__ == "__main__":
         ("tick_once_runs_due_jobs",               test_tick_once_runs_due_jobs),
         ("gateway_canvas_listing",                test_gateway_canvas_listing),
         ("gateway_canvas_change_publishes_event", test_gateway_canvas_change_publishes_event),
+        ("make_envelope_shape",                   test_make_envelope_shape),
+        ("make_envelope_accepts_raw_string_type", test_make_envelope_accepts_raw_string_type),
+        ("envelope_ids_are_unique",               test_envelope_ids_are_unique),
+        ("webhook_publishes_envelope",            test_webhook_publishes_envelope),
         ("event_bus_drops_oldest_when_full",      test_event_bus_drops_oldest_when_full),
     ]
     for name, fn in tests:
