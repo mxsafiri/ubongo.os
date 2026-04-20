@@ -354,6 +354,49 @@ UBONGO_TOOLS: List[Dict[str, Any]] = [
         },
     },
 
+    # ── SESSIONS SPAWN (delegate a focused task to a sub-agent) ─────
+    {
+        "name": "sessions_spawn",
+        "description": (
+            "Delegate a focused subtask to a fresh sub-agent that runs "
+            "in its own isolated session with a narrower sandbox. Use "
+            "this when you want to run an untrusted follow-up (e.g. "
+            "processing webhook payload content) without polluting the "
+            "main conversation or granting it your full privileges. "
+            "The child returns its final_text; your conversation context "
+            "is unaffected."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "The prompt the sub-agent should work on.",
+                },
+                "channel": {
+                    "type": "string",
+                    "description": (
+                        "Label for the spawned session (default 'subagent'). "
+                        "Useful for audit logs."
+                    ),
+                },
+                "tier": {
+                    "type": "string",
+                    "enum": ["trusted", "review", "untrusted"],
+                    "description": (
+                        "Sandbox tier for the child. Defaults to one notch "
+                        "stricter than the parent (usually 'untrusted')."
+                    ),
+                },
+                "max_steps": {
+                    "type": "integer",
+                    "description": "Safety cap on tool calls the child can make (default 4, max 8).",
+                },
+            },
+            "required": ["task"],
+        },
+    },
+
     # ── LOAD SKILL (lazy-load playbooks from the workspace) ─────────
     {
         "name": "load_skill",
@@ -421,7 +464,7 @@ def get_tools_for_tier(tier: str) -> List[Dict[str, Any]]:
     basic_tools = {
         "file_operation", "app_control", "system_info",
         "memory_search", "memory_recall", "memory_save", "memory_forget",
-        "web_search", "screen_control", "load_skill",
+        "web_search", "screen_control", "load_skill", "sessions_spawn",
     }
 
     if tier == "free":

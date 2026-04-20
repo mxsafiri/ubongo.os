@@ -5,6 +5,42 @@ All notable changes to Ubongo OS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] - 2026-04-20
+
+### Added — Autonomy primitives
+
+Phase 6 of the autonomous agent OS plan. Ubongo can now wake up on
+its own schedule, be triggered by external webhooks, and delegate
+subtasks to isolated sub-agents — each running under a scoped sandbox.
+
+- **`Scheduler`** — stdlib SQLite job store at
+  `~/.ubongo/memory/scheduler.db`. Register recurring prompts with an
+  interval and a sandbox tier; callers pump `due_jobs()` on a clock
+  of their choosing (no daemon deps). Real cron syntax is a follow-up.
+- **`Session`** — conversation scope with its own history + policy.
+  `open_session()` starts a top-level session; `spawn_session()`
+  derives a child whose tier defaults to *one notch stricter* than
+  its parent (TRUSTED parents beget UNTRUSTED children unless an
+  explicit tier is passed).
+- **`sessions_spawn`** tool — the model itself can now delegate a
+  focused subtask to a fresh sub-agent. The child's sandbox gates its
+  own tool calls; only the final_text comes back, so the parent's
+  context stays clean.
+- **`WebhookChannel` + `WebhookRegistry`** — declarative input surfaces
+  for HTTP-triggered sessions. The registry lives in `core`; the
+  sidecar/gateway will mount HTTP routes against it in a follow-up.
+- `agent_loop.run_turn` now accepts an optional `session=` param so
+  callers can hand it a ready-made session (history + policy bundled).
+- 13 more smoke tests (39 total); ruff clean.
+
+### Why
+Autonomy needs input channels that aren't the primary user's keyboard
+*and* a safe runtime for them. The sandbox tiers from Phase 5 give
+Ubongo the runtime; scheduler + webhook channels + `sessions_spawn`
+give it the inputs. The result: a cron job or Slack webhook can
+trigger a turn in a session with its own scope and can never escalate
+beyond the privileges its channel was declared with.
+
 ## [0.5.2] - 2026-04-19
 
 ### Added — Sandboxing tiers

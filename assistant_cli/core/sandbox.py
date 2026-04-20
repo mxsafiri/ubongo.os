@@ -64,6 +64,10 @@ TOOL_RISK: Dict[str, RiskLevel] = {
     "memory_save":    RiskLevel.WRITE,
     "memory_forget":  RiskLevel.WRITE,
 
+    # autonomy primitives — the child session has its own policy, so
+    # the spawn itself is just WRITE (records a session) at this layer.
+    "sessions_spawn": RiskLevel.WRITE,
+
     # file index (read-only — searches metadata, doesn't touch disk)
     "memory_search":  RiskLevel.SAFE,
 

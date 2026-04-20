@@ -23,6 +23,18 @@ from assistant_cli.core.sandbox import (
     always_deny,
     cli_approver,
 )
+from assistant_cli.core.scheduler import Scheduler, Job
+from assistant_cli.core.sessions import (
+    Session,
+    new_session_id,
+    open_session,
+    spawn_session,
+)
+from assistant_cli.core.channels import (
+    WebhookChannel,
+    WebhookRegistry,
+    default_registry,
+)
 
 __all__ = [
     "IntentParser",
@@ -45,4 +57,13 @@ __all__ = [
     "always_allow",
     "always_deny",
     "cli_approver",
+    "Scheduler",
+    "Job",
+    "Session",
+    "new_session_id",
+    "open_session",
+    "spawn_session",
+    "WebhookChannel",
+    "WebhookRegistry",
+    "default_registry",
 ]

@@ -35,11 +35,13 @@ from assistant_cli.core.workspace import (
 from assistant_cli.core.semantic_memory import SemanticMemory
 from assistant_cli.core.sandbox import (
     SandboxPolicy,
+    SandboxTier,
     SandboxDecision,
     ApprovalRequest,
     Approver,
     always_deny,
 )
+from assistant_cli.core.sessions import Session, new_session_id, spawn_session
 from assistant_cli.providers.base import AIResponse, ToolCall
 from assistant_cli.providers.tool_definitions import get_tools_for_tier
 from assistant_cli.utils.logger import logger
@@ -69,6 +71,7 @@ def run_turn(
     tool_executor:  Optional[ToolExecutor]         = None,
     sandbox:        Optional[SandboxPolicy]        = None,
     approver:       Optional[Approver]             = None,
+    session:        Optional[Session]              = None,
     max_steps:      int                            = 8,
 ) -> AgentTurn:
     """
@@ -96,10 +99,14 @@ def run_turn(
     """
     ws       = workspace or load_workspace()
     mem      = memory or SemanticMemory(ws.episodic_dir)
-    history  = history if history is not None else []
+    if session is not None:
+        history = session.history
+        policy  = sandbox or session.policy
+    else:
+        history = history if history is not None else []
+        policy  = sandbox or SandboxPolicy.trusted()
     tier     = getattr(settings, "effective_tier", None) or getattr(settings, "user_tier", "free")
     tools    = get_tools_for_tier(tier)
-    policy   = sandbox  or SandboxPolicy.trusted()
     approve  = approver or always_deny
 
     sys_prompt = assemble_system_prompt(ws)
@@ -175,7 +182,14 @@ def run_turn(
                 }
                 logger.info("agent_loop: blocked %s (%s) — %s", call.name, risk.value, reason)
             else:
-                result = _dispatch_tool(call, ws=ws, memory=mem, tool_executor=tool_executor)
+                result = _dispatch_tool(
+                    call,
+                    ws            = ws,
+                    memory        = mem,
+                    tool_executor = tool_executor,
+                    provider      = provider,
+                    parent        = session,
+                )
 
             pending_tool_results.append({"id": call.id, "name": call.name, "result": result})
             tool_log.append({
@@ -211,6 +225,8 @@ def _dispatch_tool(
     ws: Workspace,
     memory: SemanticMemory,
     tool_executor: Optional[ToolExecutor],
+    provider: Any = None,
+    parent: Optional[Session] = None,
 ) -> Any:
     """Route a tool call to a workspace built-in, then to the executor."""
     if call.name == "load_skill":
@@ -221,6 +237,14 @@ def _dispatch_tool(
         return _tool_memory_save(call.input, memory)
     if call.name == "memory_forget":
         return _tool_memory_forget(call.input, memory)
+    if call.name == "sessions_spawn":
+        return _tool_sessions_spawn(
+            call.input,
+            provider = provider,
+            ws       = ws,
+            memory   = memory,
+            parent   = parent,
+        )
 
     if tool_executor is None:
         return {
@@ -271,6 +295,76 @@ def _tool_memory_forget(payload: Dict[str, Any], mem: SemanticMemory) -> Dict[st
         return {"error": "memory_forget requires an integer 'id'."}
     removed = mem.forget(fact_id)
     return {"forgotten": removed, "id": fact_id}
+
+
+def _tool_sessions_spawn(
+    payload:  Dict[str, Any],
+    *,
+    provider: Any,
+    ws:       Workspace,
+    memory:   SemanticMemory,
+    parent:   Optional[Session],
+) -> Dict[str, Any]:
+    """
+    Spawn a sub-agent to handle a focused task.
+
+    The child runs under a *narrower* sandbox than the parent — by
+    default it drops to UNTRUSTED, so a delegated helper can't invoke
+    privileged tools just because the main session had them.
+    """
+    p = payload or {}
+    task = str(p.get("task", "") or "").strip()
+    if not task:
+        return {"error": "sessions_spawn requires a non-empty 'task'."}
+    if provider is None:
+        return {"error": "sessions_spawn needs a provider in scope; wiring gap."}
+
+    channel    = str(p.get("channel", "subagent") or "subagent")
+    tier_name  = str(p.get("tier", "") or "").strip().lower()
+    tier       = None
+    if tier_name:
+        try:
+            tier = SandboxTier(tier_name)
+        except ValueError:
+            return {"error": f"unknown tier '{tier_name}' (expected trusted/review/untrusted)."}
+
+    try:
+        max_steps = int(p.get("max_steps", 4))
+    except (TypeError, ValueError):
+        max_steps = 4
+    max_steps = max(1, min(max_steps, 8))
+
+    # No parent? Open a deliberately untrusted orphan session.
+    if parent is None:
+        child = Session(
+            id      = new_session_id(),
+            channel = channel,
+            policy  = SandboxPolicy.untrusted(),
+        )
+    else:
+        child = spawn_session(parent=parent, channel=channel, tier=tier)
+
+    try:
+        sub = run_turn(
+            task,
+            provider,
+            workspace = ws,
+            memory    = memory,
+            session   = child,
+            max_steps = max_steps,
+        )
+    except Exception as exc:
+        logger.warning("sessions_spawn: sub-turn raised: %s", exc)
+        return {"error": f"sub-session failed: {exc}"}
+
+    return {
+        "session_id": child.id,
+        "channel":    child.channel,
+        "tier":       child.policy.tier.value,
+        "final_text": sub.final_text,
+        "steps":      sub.steps,
+        "stop":       sub.stop,
+    }
 
 
 def _tool_load_skill(payload: Dict[str, Any], ws: Workspace) -> Dict[str, Any]:

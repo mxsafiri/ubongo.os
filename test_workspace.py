@@ -17,11 +17,21 @@ from assistant_cli.core.agent_loop import run_turn
 from assistant_cli.core.semantic_memory import SemanticMemory, append_daily_note
 from assistant_cli.core.sandbox import (
     SandboxPolicy,
+    SandboxTier,
     SandboxDecision,
     RiskLevel,
     ApprovalRequest,
     always_allow,
     always_deny,
+)
+from assistant_cli.core.scheduler import Scheduler
+from assistant_cli.core.sessions import (
+    open_session,
+    spawn_session,
+)
+from assistant_cli.core.channels import (
+    WebhookChannel,
+    WebhookRegistry,
 )
 from assistant_cli.providers.base import AIResponse, ToolCall
 
@@ -442,6 +452,182 @@ def test_always_allow_and_deny() -> None:
     assert always_deny(req)  is False
 
 
+# ── Phase 6: scheduler tests ──────────────────────────────────────────
+
+def test_scheduler_add_and_list(tmp_path: Path) -> None:
+    s = Scheduler(tmp_path)
+    j = s.add_job("morning-brief", "Summarise my day", interval_seconds=3600)
+    assert j.id > 0
+    assert j.name == "morning-brief"
+    assert j.enabled is True
+    assert s.count() == 1
+    assert [x.name for x in s.list_jobs()] == ["morning-brief"]
+    s.close()
+
+
+def test_scheduler_due_jobs_uses_clock(tmp_path: Path) -> None:
+    s = Scheduler(tmp_path)
+    s.add_job("early", "x", interval_seconds=60, start_offset=0.0)
+    s.add_job("later", "y", interval_seconds=60, start_offset=300.0)
+
+    # With a clock far in the future, both are due.
+    due = s.due_jobs(now=10**12)
+    assert {j.name for j in due} == {"early", "later"}
+
+    # With "now" at epoch, nothing is due yet.
+    assert s.due_jobs(now=0.0) == []
+    s.close()
+
+
+def test_scheduler_mark_run_advances_next_run(tmp_path: Path) -> None:
+    s = Scheduler(tmp_path)
+    j = s.add_job("tick", "x", interval_seconds=120, start_offset=0.0)
+    t0 = 1_700_000_000.0
+    assert s.mark_run(j.id, now=t0) is True
+    reloaded = [x for x in s.list_jobs() if x.id == j.id][0]
+    assert reloaded.last_run_at == t0
+    assert abs(reloaded.next_run_at - (t0 + 120)) < 0.01
+    s.close()
+
+
+def test_scheduler_disable_and_remove(tmp_path: Path) -> None:
+    s = Scheduler(tmp_path)
+    j = s.add_job("cron-a", "x", interval_seconds=60)
+    assert s.set_enabled(j.id, False) is True
+    due = s.due_jobs(now=10**12)
+    assert due == []  # disabled jobs never appear in due_jobs
+    assert s.remove_job(j.id) is True
+    assert s.count() == 0
+    s.close()
+
+
+def test_scheduler_rejects_invalid_input(tmp_path: Path) -> None:
+    s = Scheduler(tmp_path)
+    try:
+        s.add_job("", "prompt", interval_seconds=60)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("empty name should raise")
+    try:
+        s.add_job("x", "y", interval_seconds=0)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("zero interval should raise")
+    s.close()
+
+
+# ── Phase 6: session tests ────────────────────────────────────────────
+
+def test_open_session_defaults_to_trusted() -> None:
+    s = open_session(channel="main")
+    assert s.channel == "main"
+    assert s.policy.tier == SandboxTier.TRUSTED
+    assert s.history == []
+    assert s.parent_id is None
+
+
+def test_spawn_session_steps_down_to_untrusted() -> None:
+    parent = open_session(channel="main")  # trusted
+    child = spawn_session(parent=parent)
+    assert child.policy.tier == SandboxTier.UNTRUSTED
+    assert child.parent_id == parent.id
+    assert child.id != parent.id
+    assert child.history == []  # isolated
+
+
+def test_spawn_session_honours_explicit_tier() -> None:
+    parent = open_session(channel="main")
+    child = spawn_session(parent=parent, tier=SandboxTier.REVIEW)
+    assert child.policy.tier == SandboxTier.REVIEW
+
+
+# ── Phase 6: sessions_spawn tool ──────────────────────────────────────
+
+def test_run_turn_sessions_spawn_runs_child() -> None:
+    # Outer model delegates a task, then wraps up. The child's provider
+    # runs its own little turn and returns text.
+    outer = FakeProvider([
+        AIResponse(
+            content="",
+            tool_calls=[ToolCall(
+                id="t1",
+                name="sessions_spawn",
+                input={"task": "summarise inbox", "max_steps": 2},
+            )],
+            stop_reason="tool_use",
+        ),
+        # Child turn response (same provider, next scripted response):
+        AIResponse(content="inbox has 3 unreads.", stop_reason="end_turn"),
+        # Parent resumes:
+        AIResponse(content="done — subagent said 3 unreads.", stop_reason="end_turn"),
+    ])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ensure_workspace(Path(tmp))
+        ws = load_workspace(Path(tmp))
+        parent_sess = open_session(channel="main")
+        turn = run_turn(
+            "check inbox",
+            outer,
+            workspace = ws,
+            session   = parent_sess,
+        )
+
+    assert turn.final_text == "done — subagent said 3 unreads."
+    spawn_entry = [e for e in turn.tool_log if e["name"] == "sessions_spawn"][0]
+    # The result rendered back into history includes the child's final_text.
+    assert "3 unreads" in str(spawn_entry["result"])
+
+
+def test_sessions_spawn_requires_task() -> None:
+    provider = FakeProvider([
+        AIResponse(
+            content="",
+            tool_calls=[ToolCall(id="t1", name="sessions_spawn", input={})],
+            stop_reason="tool_use",
+        ),
+        AIResponse(content="ok, noted.", stop_reason="end_turn"),
+    ])
+    with tempfile.TemporaryDirectory() as tmp:
+        ensure_workspace(Path(tmp))
+        ws = load_workspace(Path(tmp))
+        turn = run_turn("spawn please", provider, workspace=ws)
+
+    entry = turn.tool_log[0]
+    assert "error" in str(entry["result"]).lower()
+
+
+# ── Phase 6: webhook registry tests ───────────────────────────────────
+
+def test_webhook_registry_register_find_remove() -> None:
+    reg = WebhookRegistry()
+    ch = WebhookChannel(name="github", tier=SandboxTier.UNTRUSTED, secret="shhh")
+    reg.register(ch)
+    assert len(reg) == 1
+
+    found = reg.find("github")
+    assert found is ch
+    # Policy derived from channel matches its tier + allow/deny sets.
+    pol = found.policy()
+    assert pol.tier == SandboxTier.UNTRUSTED
+
+    assert reg.remove("github") is True
+    assert reg.find("github") is None
+    assert reg.remove("github") is False
+
+
+def test_webhook_registry_rejects_empty_name() -> None:
+    reg = WebhookRegistry()
+    try:
+        reg.register(WebhookChannel(name=""))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("empty name should raise")
+
+
 # ── manual runner ──────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -474,6 +660,18 @@ if __name__ == "__main__":
         ("run_turn_review_with_approver",       test_run_turn_review_with_approver),
         ("run_turn_review_without_approver_denies", test_run_turn_review_without_approver_denies),
         ("always_allow_and_deny",               test_always_allow_and_deny),
+        ("scheduler_add_and_list",              test_scheduler_add_and_list),
+        ("scheduler_due_jobs_uses_clock",       test_scheduler_due_jobs_uses_clock),
+        ("scheduler_mark_run_advances_next_run", test_scheduler_mark_run_advances_next_run),
+        ("scheduler_disable_and_remove",        test_scheduler_disable_and_remove),
+        ("scheduler_rejects_invalid_input",     test_scheduler_rejects_invalid_input),
+        ("open_session_defaults_to_trusted",    test_open_session_defaults_to_trusted),
+        ("spawn_session_steps_down_to_untrusted", test_spawn_session_steps_down_to_untrusted),
+        ("spawn_session_honours_explicit_tier", test_spawn_session_honours_explicit_tier),
+        ("run_turn_sessions_spawn_runs_child",  test_run_turn_sessions_spawn_runs_child),
+        ("sessions_spawn_requires_task",        test_sessions_spawn_requires_task),
+        ("webhook_registry_register_find_remove", test_webhook_registry_register_find_remove),
+        ("webhook_registry_rejects_empty_name", test_webhook_registry_rejects_empty_name),
     ]
     for name, fn in tests:
         try:
