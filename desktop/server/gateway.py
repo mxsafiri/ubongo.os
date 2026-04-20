@@ -54,10 +54,13 @@ logger = logging.getLogger("ubongo.gateway")
 
 
 # ── turn runner protocol ─────────────────────────────────────────────
-# Callable the Gateway invokes for every scheduled/webhook turn. The
-# real sidecar wires this to `core.run_turn` with its provider; tests
-# swap in a stub.
-TurnRunner = Callable[[str, Session], AgentTurn]
+# Callable the Gateway invokes for every scheduled/webhook/user turn.
+# The real sidecar wires this to `core.run_turn` with its provider plus
+# whatever extra context (workspace, memory, tool_executor, approver)
+# belongs to the host process; tests swap in a stub. Canvas is owned
+# by the Gateway and injected here so tool calls like `canvas_emit`
+# land on the surface that every subscriber streams from.
+TurnRunner = Callable[[str, Session, "Canvas"], AgentTurn]
 
 
 # ── request bodies ───────────────────────────────────────────────────
@@ -77,6 +80,13 @@ class RegisterJobBody(BaseModel):
     interval_seconds: int
     tier:             str   = "untrusted"
     start_offset:     float = 0.0
+
+
+class TurnBody(BaseModel):
+    prompt:     str
+    session_id: Optional[str] = None
+    tier:       str           = "trusted"
+    channel:    str           = "desktop"
 
 
 # ── event bus ────────────────────────────────────────────────────────
@@ -268,7 +278,9 @@ class Gateway:
                 "ts":         time.time(),
             })
 
-            turn = await asyncio.to_thread(self.run_turn_fn, prompt, session)
+            turn = await asyncio.to_thread(
+                self.run_turn_fn, prompt, session, self.canvas
+            )
 
             await self.bus.publish({
                 "type":       "turn_complete",
@@ -284,6 +296,75 @@ class Gateway:
                 "steps":      turn.steps,
                 "stop":       turn.stop,
             }
+
+        @r.post("/gateway/turn")
+        async def run_turn_endpoint(body: TurnBody) -> Dict[str, Any]:
+            """
+            Primary user-turn entrypoint. Tauri/CLI/any client posts a
+            prompt here; the Gateway opens (or reuses) a session, runs
+            the turn through the injected runner with canvas wired, and
+            returns the final text + session id for the next turn.
+            """
+            prompt = body.prompt.strip()
+            if not prompt:
+                raise HTTPException(400, "empty prompt")
+            try:
+                tier = SandboxTier(body.tier.lower())
+            except ValueError:
+                raise HTTPException(400, f"unknown tier '{body.tier}'")
+
+            session = self._sessions.get(body.session_id) if body.session_id else None
+            if session is None:
+                session = open_session(
+                    channel = body.channel,
+                    policy  = SandboxPolicy(tier=tier),
+                )
+                self._sessions[session.id] = session
+
+            await self.bus.publish({
+                "type":       "turn_started",
+                "session_id": session.id,
+                "channel":    session.channel,
+                "tier":       session.policy.tier.value,
+                "ts":         time.time(),
+            })
+
+            turn = await asyncio.to_thread(
+                self.run_turn_fn, prompt, session, self.canvas
+            )
+
+            await self.bus.publish({
+                "type":       "turn_complete",
+                "session_id": session.id,
+                "steps":      turn.steps,
+                "stop":       turn.stop,
+                "ts":         time.time(),
+            })
+
+            return {
+                "session_id": session.id,
+                "final_text": turn.final_text,
+                "steps":      turn.steps,
+                "stop":       turn.stop,
+                "tool_log":   turn.tool_log,
+            }
+
+        @r.get("/gateway/sessions")
+        def list_sessions() -> Dict[str, Any]:
+            return {"sessions": [s.to_dict() for s in self._sessions.values()]}
+
+        @r.get("/gateway/sessions/{session_id}")
+        def get_session(session_id: str) -> Dict[str, Any]:
+            s = self._sessions.get(session_id)
+            if s is None:
+                raise HTTPException(404, f"no session '{session_id}'")
+            return {"session": s.to_dict(), "history": s.history}
+
+        @r.delete("/gateway/sessions/{session_id}")
+        def close_session(session_id: str) -> Dict[str, Any]:
+            if self._sessions.pop(session_id, None) is None:
+                raise HTTPException(404, f"no session '{session_id}'")
+            return {"closed": session_id}
 
         @r.websocket("/gateway/stream")
         async def stream(ws: WebSocket) -> None:
@@ -366,7 +447,9 @@ class Gateway:
                 "ts":         time.time(),
             })
 
-            turn = await asyncio.to_thread(self.run_turn_fn, job.prompt, session)
+            turn = await asyncio.to_thread(
+                self.run_turn_fn, job.prompt, session, self.canvas
+            )
 
             await self.bus.publish({
                 "type":       "turn_complete",

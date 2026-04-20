@@ -5,6 +5,41 @@ All notable changes to Ubongo OS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.6] - 2026-04-20
+
+### Added — Primary user-turn entrypoint
+
+The kernel could already run turns for cron jobs and webhooks; it now
+runs them for the primary user too. Anything with an HTTP client
+(Tauri, CLI, curl, a future browser extension) can drive a real
+`run_turn` through the Gateway with session continuity and canvas
+wired end-to-end.
+
+- **`POST /gateway/turn`** — accepts `{prompt, session_id?, tier?,
+  channel?}`. Opens a session on first call, reuses it when the
+  caller echoes `session_id` back, and returns
+  `{session_id, final_text, steps, stop, tool_log}`.
+- **`GET /gateway/sessions`**, **`GET /gateway/sessions/{id}`** (with
+  history), and **`DELETE /gateway/sessions/{id}`** — minimal
+  inspection + teardown surface so clients can show what's live and
+  close sessions they're done with.
+- **`TurnRunner` signature extended** to `(prompt, session, canvas)`
+  so every turn — user, webhook, cron — lands tool output on the same
+  canvas the `/gateway/stream` subscribers are already watching.
+- **New events on the bus**: `turn_started` (channel, tier) so clients
+  can render "thinking…" state before the turn returns.
+- 6 new gateway tests covering the happy path, session reuse,
+  validation (empty prompt, bad tier), event publish, and session
+  close.
+
+### Why
+Everything in Phase 2/6/7 assumed a caller would eventually drive
+`run_turn` from the product side. Without a typed HTTP entrypoint,
+the kernel stayed behind the CLI's legacy `ConversationEngine`. This
+closes the loop: the same path cron and webhooks already use is now
+reachable from the user's keyboard without touching the legacy chat
+code.
+
 ## [0.5.5] - 2026-04-19
 
 ### Added — Canvas pattern

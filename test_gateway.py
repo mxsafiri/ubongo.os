@@ -26,8 +26,16 @@ from assistant_cli.core.scheduler import Scheduler   # noqa: E402
 from assistant_cli.core.channels import WebhookRegistry  # noqa: E402
 
 
-def _dummy_runner(prompt: str, session) -> AgentTurn:
-    """Stand-in for run_turn: just echoes the prompt into final_text."""
+def _dummy_runner(prompt: str, session, canvas) -> AgentTurn:
+    """Stand-in for run_turn: echoes the prompt and writes a canvas note."""
+    canvas.emit(
+        kind       = "note",
+        title      = f"turn in {session.channel}",
+        payload    = {"prompt": prompt},
+        session_id = session.id,
+    )
+    session.history.append({"role": "user", "content": prompt})
+    session.history.append({"role": "assistant", "content": f"echo: {prompt}"})
     return AgentTurn(
         final_text = f"echo: {prompt}",
         steps      = 1,
@@ -177,6 +185,96 @@ def test_webhook_requires_signature_when_secret_set(tmp_path: Path) -> None:
         assert r.status_code == 200
 
 
+# ── user turn endpoint ───────────────────────────────────────────────
+
+def test_turn_opens_new_session_and_runs(tmp_path: Path) -> None:
+    gw  = _build_gateway(tmp_path)
+    app = _build_app(gw)
+    with TestClient(app) as client:
+        r = client.post("/gateway/turn", json={"prompt": "hello world"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["final_text"] == "echo: hello world"
+        assert body["session_id"]
+        assert body["stop"] == "end_turn"
+
+        # Session is now trackable.
+        r = client.get("/gateway/sessions")
+        assert len(r.json()["sessions"]) == 1
+        assert r.json()["sessions"][0]["channel"] == "desktop"
+
+
+def test_turn_reuses_session_when_id_provided(tmp_path: Path) -> None:
+    gw  = _build_gateway(tmp_path)
+    app = _build_app(gw)
+    with TestClient(app) as client:
+        r1 = client.post("/gateway/turn", json={"prompt": "first"})
+        sid = r1.json()["session_id"]
+
+        r2 = client.post("/gateway/turn", json={"prompt": "second", "session_id": sid})
+        assert r2.json()["session_id"] == sid
+
+        # History carried forward: two user + two assistant entries.
+        r = client.get(f"/gateway/sessions/{sid}")
+        assert r.status_code == 200
+        assert len(r.json()["history"]) == 4
+
+
+def test_turn_rejects_empty_prompt(tmp_path: Path) -> None:
+    gw  = _build_gateway(tmp_path)
+    app = _build_app(gw)
+    with TestClient(app) as client:
+        r = client.post("/gateway/turn", json={"prompt": "   "})
+        assert r.status_code == 400
+
+
+def test_turn_rejects_unknown_tier(tmp_path: Path) -> None:
+    gw  = _build_gateway(tmp_path)
+    app = _build_app(gw)
+    with TestClient(app) as client:
+        r = client.post("/gateway/turn", json={"prompt": "hi", "tier": "nope"})
+        assert r.status_code == 400
+
+
+def test_turn_publishes_start_and_complete_events(tmp_path: Path) -> None:
+    gw = _build_gateway(tmp_path)
+
+    async def scenario() -> None:
+        q = gw.bus.subscribe()
+        # Open session first so we can drive the turn in-loop without
+        # FastAPI's sync TestClient thread — keeps the queue readable.
+        from assistant_cli.core import SandboxPolicy, SandboxTier, open_session
+        session = open_session(
+            channel = "desktop",
+            policy  = SandboxPolicy(tier=SandboxTier.TRUSTED),
+        )
+        gw._sessions[session.id] = session
+
+        await gw.bus.publish({"type": "turn_started", "session_id": session.id})
+        await gw.bus.publish({"type": "turn_complete", "session_id": session.id})
+
+        first  = await asyncio.wait_for(q.get(), timeout=1.0)
+        second = await asyncio.wait_for(q.get(), timeout=1.0)
+        assert first["type"]  == "turn_started"
+        assert second["type"] == "turn_complete"
+
+    asyncio.run(scenario())
+
+
+def test_session_close_removes_it(tmp_path: Path) -> None:
+    gw  = _build_gateway(tmp_path)
+    app = _build_app(gw)
+    with TestClient(app) as client:
+        sid = client.post("/gateway/turn", json={"prompt": "x"}).json()["session_id"]
+
+        r = client.delete(f"/gateway/sessions/{sid}")
+        assert r.status_code == 200
+        assert r.json() == {"closed": sid}
+
+        r = client.delete(f"/gateway/sessions/{sid}")
+        assert r.status_code == 404
+
+
 # ── scheduler pump ───────────────────────────────────────────────────
 
 def test_tick_once_runs_due_jobs(tmp_path: Path) -> None:
@@ -271,6 +369,13 @@ if __name__ == "__main__":
         ("webhook_404_for_unknown_channel",       test_webhook_404_for_unknown_channel),
         ("webhook_requires_signature_when_secret_set",
                                                   test_webhook_requires_signature_when_secret_set),
+        ("turn_opens_new_session_and_runs",       test_turn_opens_new_session_and_runs),
+        ("turn_reuses_session_when_id_provided",  test_turn_reuses_session_when_id_provided),
+        ("turn_rejects_empty_prompt",             test_turn_rejects_empty_prompt),
+        ("turn_rejects_unknown_tier",             test_turn_rejects_unknown_tier),
+        ("turn_publishes_start_and_complete_events",
+                                                  test_turn_publishes_start_and_complete_events),
+        ("session_close_removes_it",              test_session_close_removes_it),
         ("tick_once_runs_due_jobs",               test_tick_once_runs_due_jobs),
         ("gateway_canvas_listing",                test_gateway_canvas_listing),
         ("gateway_canvas_change_publishes_event", test_gateway_canvas_change_publishes_event),
