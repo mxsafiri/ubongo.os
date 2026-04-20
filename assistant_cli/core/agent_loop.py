@@ -43,6 +43,8 @@ from assistant_cli.core.sandbox import (
 )
 from assistant_cli.core.sessions import Session, new_session_id, spawn_session
 from assistant_cli.core.canvas import Canvas
+from assistant_cli.core.scheduler import Scheduler
+from assistant_cli.core.channels import WebhookChannel, WebhookRegistry
 from assistant_cli.core.reflection import (
     LearningSuggestion,
     append_suggestion,
@@ -79,6 +81,8 @@ def run_turn(
     approver:       Optional[Approver]             = None,
     session:        Optional[Session]              = None,
     canvas:         Optional[Canvas]               = None,
+    scheduler:      Optional[Scheduler]            = None,
+    registry:       Optional[WebhookRegistry]      = None,
     max_steps:      int                            = 8,
 ) -> AgentTurn:
     """
@@ -197,6 +201,8 @@ def run_turn(
                     provider      = provider,
                     parent        = session,
                     canvas        = canvas,
+                    scheduler     = scheduler,
+                    registry      = registry,
                 )
 
             pending_tool_results.append({"id": call.id, "name": call.name, "result": result})
@@ -236,6 +242,8 @@ def _dispatch_tool(
     provider: Any = None,
     parent: Optional[Session] = None,
     canvas: Optional[Canvas] = None,
+    scheduler: Optional[Scheduler] = None,
+    registry: Optional[WebhookRegistry] = None,
 ) -> Any:
     """Route a tool call to a workspace built-in, then to the executor."""
     if call.name == "load_skill":
@@ -260,6 +268,18 @@ def _dispatch_tool(
         return _tool_learning_suggest(call.input, ws=ws, canvas=canvas, session=parent)
     if call.name == "reflection_log":
         return _tool_reflection_log(call.input, ws=ws, session=parent)
+    if call.name == "cron_create":
+        return _tool_cron_create(call.input, scheduler=scheduler)
+    if call.name == "cron_list":
+        return _tool_cron_list(call.input, scheduler=scheduler)
+    if call.name == "cron_delete":
+        return _tool_cron_delete(call.input, scheduler=scheduler)
+    if call.name == "webhook_register":
+        return _tool_webhook_register(call.input, registry=registry)
+    if call.name == "webhook_list":
+        return _tool_webhook_list(call.input, registry=registry)
+    if call.name == "webhook_remove":
+        return _tool_webhook_remove(call.input, registry=registry)
 
     if tool_executor is None:
         return {
@@ -427,6 +447,141 @@ def _tool_reflection_log(
         return {"error": f"reflection_log: {exc}"}
 
     return {"logged": True, "session_id": sid, "block": block}
+
+
+# ── autonomy primitives ───────────────────────────────────────────────
+
+def _tool_cron_create(
+    payload: Dict[str, Any],
+    *,
+    scheduler: Optional[Scheduler],
+) -> Dict[str, Any]:
+    """Schedule a recurring prompt. Tier gates what the cron session may do."""
+    if scheduler is None:
+        return {"error": "cron_create unavailable — no scheduler wired into this turn."}
+    p = payload or {}
+    name   = str(p.get("name",   "") or "").strip()
+    prompt = str(p.get("prompt", "") or "").strip()
+    try:
+        interval = int(p.get("interval_seconds", 0))
+    except (TypeError, ValueError):
+        return {"error": "cron_create 'interval_seconds' must be an integer."}
+    if not name:
+        return {"error": "cron_create requires a non-empty 'name'."}
+    if not prompt:
+        return {"error": "cron_create requires a non-empty 'prompt'."}
+
+    tier_name = str(p.get("tier", "untrusted") or "untrusted").strip().lower()
+    try:
+        SandboxTier(tier_name)
+    except ValueError:
+        return {"error": f"cron_create: unknown tier '{tier_name}'."}
+    try:
+        start_offset = float(p.get("start_offset", 0.0))
+    except (TypeError, ValueError):
+        start_offset = 0.0
+
+    try:
+        job = scheduler.add_job(
+            name,
+            prompt,
+            interval_seconds = interval,
+            tier             = tier_name,
+            start_offset     = start_offset,
+        )
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return {"created": True, "job": job.to_dict()}
+
+
+def _tool_cron_list(
+    _payload: Dict[str, Any],
+    *,
+    scheduler: Optional[Scheduler],
+) -> Dict[str, Any]:
+    if scheduler is None:
+        return {"error": "cron_list unavailable — no scheduler wired into this turn."}
+    return {"jobs": [j.to_dict() for j in scheduler.list_jobs()]}
+
+
+def _tool_cron_delete(
+    payload: Dict[str, Any],
+    *,
+    scheduler: Optional[Scheduler],
+) -> Dict[str, Any]:
+    if scheduler is None:
+        return {"error": "cron_delete unavailable — no scheduler wired into this turn."}
+    p = payload or {}
+    try:
+        job_id = int(p.get("id"))
+    except (TypeError, ValueError):
+        return {"error": "cron_delete requires an integer 'id'."}
+    removed = scheduler.remove_job(job_id)
+    return {"removed": removed, "id": job_id}
+
+
+def _tool_webhook_register(
+    payload: Dict[str, Any],
+    *,
+    registry: Optional[WebhookRegistry],
+) -> Dict[str, Any]:
+    """Open a webhook channel so an external system can trigger turns."""
+    if registry is None:
+        return {"error": "webhook_register unavailable — no registry wired into this turn."}
+    p = payload or {}
+    name = str(p.get("name", "") or "").strip()
+    if not name:
+        return {"error": "webhook_register requires a non-empty 'name'."}
+
+    tier_name = str(p.get("tier", "untrusted") or "untrusted").strip().lower()
+    try:
+        tier = SandboxTier(tier_name)
+    except ValueError:
+        return {"error": f"webhook_register: unknown tier '{tier_name}'."}
+
+    allow = p.get("allow") or []
+    deny  = p.get("deny")  or []
+    if not isinstance(allow, list) or not isinstance(deny, list):
+        return {"error": "webhook_register 'allow'/'deny' must be lists of tool names."}
+
+    ch = WebhookChannel(
+        name     = name,
+        tier     = tier,
+        allow    = set(str(x) for x in allow),
+        deny     = set(str(x) for x in deny),
+        addendum = str(p.get("addendum", "") or ""),
+        secret   = p.get("secret"),
+    )
+    try:
+        registry.register(ch)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return {"registered": True, "channel": ch.to_dict()}
+
+
+def _tool_webhook_list(
+    _payload: Dict[str, Any],
+    *,
+    registry: Optional[WebhookRegistry],
+) -> Dict[str, Any]:
+    if registry is None:
+        return {"error": "webhook_list unavailable — no registry wired into this turn."}
+    return {"channels": [c.to_dict() for c in registry.list()]}
+
+
+def _tool_webhook_remove(
+    payload: Dict[str, Any],
+    *,
+    registry: Optional[WebhookRegistry],
+) -> Dict[str, Any]:
+    if registry is None:
+        return {"error": "webhook_remove unavailable — no registry wired into this turn."}
+    p = payload or {}
+    name = str(p.get("name", "") or "").strip()
+    if not name:
+        return {"error": "webhook_remove requires a 'name'."}
+    removed = registry.remove(name)
+    return {"removed": removed, "name": name}
 
 
 def _tool_sessions_spawn(

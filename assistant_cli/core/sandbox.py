@@ -77,6 +77,17 @@ TOOL_RISK: Dict[str, RiskLevel] = {
     "learning_suggest": RiskLevel.WRITE,
     "reflection_log":   RiskLevel.WRITE,
 
+    # autonomy tools — the agent can schedule itself and open webhook
+    # channels. Creating / deleting a job or channel mutates durable
+    # gateway state, so both sides of the CRUD pair are WRITE. Listing
+    # is read-only.
+    "cron_create":      RiskLevel.WRITE,
+    "cron_list":        RiskLevel.SAFE,
+    "cron_delete":      RiskLevel.WRITE,
+    "webhook_register": RiskLevel.WRITE,
+    "webhook_list":     RiskLevel.SAFE,
+    "webhook_remove":   RiskLevel.WRITE,
+
     # file index (read-only — searches metadata, doesn't touch disk)
     "memory_search":  RiskLevel.SAFE,
 

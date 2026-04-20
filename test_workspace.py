@@ -880,6 +880,218 @@ def test_learning_suggest_rejects_invalid_target(tmp_path: Path) -> None:
     assert "error" in str(turn.tool_log[0]["result"]).lower()
 
 
+def test_run_turn_cron_create_and_list_tools(tmp_path: Path) -> None:
+    """Agent schedules a job and immediately lists it back."""
+    from assistant_cli.core import Scheduler
+    scheduler = Scheduler(tmp_path)
+
+    provider = FakeProvider([
+        AIResponse(
+            content="",
+            tool_calls=[ToolCall(
+                id="t1",
+                name="cron_create",
+                input={
+                    "name":             "morning-brief",
+                    "prompt":           "Summarise overnight activity",
+                    "interval_seconds": 86400,
+                    "tier":             "review",
+                },
+            )],
+            stop_reason="tool_use",
+        ),
+        AIResponse(
+            content="",
+            tool_calls=[ToolCall(id="t2", name="cron_list", input={})],
+            stop_reason="tool_use",
+        ),
+        AIResponse(content="scheduled.", stop_reason="end_turn"),
+    ])
+    ensure_workspace(tmp_path)
+    ws = load_workspace(tmp_path)
+    turn = run_turn(
+        "schedule a morning brief",
+        provider,
+        workspace = ws,
+        scheduler = scheduler,
+        max_steps = 5,
+    )
+
+    assert turn.final_text == "scheduled."
+    assert len(scheduler.list_jobs()) == 1
+    job = scheduler.list_jobs()[0]
+    assert job.name == "morning-brief"
+    # The agent saw its own job come back on cron_list.
+    list_result = turn.tool_log[1]["result"]
+    assert "morning-brief" in str(list_result)
+
+
+def test_run_turn_cron_delete_tool(tmp_path: Path) -> None:
+    from assistant_cli.core import Scheduler
+    scheduler = Scheduler(tmp_path)
+    job = scheduler.add_job("throwaway", "noop", interval_seconds=3600)
+
+    provider = FakeProvider([
+        AIResponse(
+            content="",
+            tool_calls=[ToolCall(
+                id="t1",
+                name="cron_delete",
+                input={"id": job.id},
+            )],
+            stop_reason="tool_use",
+        ),
+        AIResponse(content="removed.", stop_reason="end_turn"),
+    ])
+    ensure_workspace(tmp_path)
+    ws = load_workspace(tmp_path)
+    turn = run_turn(
+        "drop that job",
+        provider,
+        workspace = ws,
+        scheduler = scheduler,
+    )
+
+    assert turn.final_text == "removed."
+    assert scheduler.list_jobs() == []
+
+
+def test_cron_create_unavailable_without_scheduler(tmp_path: Path) -> None:
+    """No scheduler in scope → clear error, no crash."""
+    provider = FakeProvider([
+        AIResponse(
+            content="",
+            tool_calls=[ToolCall(
+                id="t1",
+                name="cron_create",
+                input={"name": "x", "prompt": "y", "interval_seconds": 60},
+            )],
+            stop_reason="tool_use",
+        ),
+        AIResponse(content="ok.", stop_reason="end_turn"),
+    ])
+    ensure_workspace(tmp_path)
+    ws = load_workspace(tmp_path)
+    turn = run_turn("schedule without scheduler", provider, workspace=ws)
+
+    result = turn.tool_log[0]["result"]
+    assert "no scheduler" in str(result).lower()
+
+
+def test_run_turn_webhook_register_and_list_tools(tmp_path: Path) -> None:
+    from assistant_cli.core import WebhookRegistry
+    registry = WebhookRegistry()
+
+    provider = FakeProvider([
+        AIResponse(
+            content="",
+            tool_calls=[ToolCall(
+                id="t1",
+                name="webhook_register",
+                input={
+                    "name":   "github",
+                    "tier":   "untrusted",
+                    "secret": "shh",
+                },
+            )],
+            stop_reason="tool_use",
+        ),
+        AIResponse(
+            content="",
+            tool_calls=[ToolCall(id="t2", name="webhook_list", input={})],
+            stop_reason="tool_use",
+        ),
+        AIResponse(content="registered.", stop_reason="end_turn"),
+    ])
+    ensure_workspace(tmp_path)
+    ws = load_workspace(tmp_path)
+    turn = run_turn(
+        "open a github webhook",
+        provider,
+        workspace = ws,
+        registry  = registry,
+        max_steps = 5,
+    )
+
+    assert turn.final_text == "registered."
+    assert [c.name for c in registry.list()] == ["github"]
+    # Secret is present on the channel but should not appear in the tool
+    # result — to_dict() strips it to avoid leaking into model context.
+    list_result = turn.tool_log[1]["result"]
+    assert "github" in str(list_result)
+
+
+def test_run_turn_webhook_remove_tool(tmp_path: Path) -> None:
+    from assistant_cli.core import SandboxTier, WebhookChannel, WebhookRegistry
+    registry = WebhookRegistry()
+    registry.register(WebhookChannel(name="slack", tier=SandboxTier.UNTRUSTED))
+
+    provider = FakeProvider([
+        AIResponse(
+            content="",
+            tool_calls=[ToolCall(
+                id="t1",
+                name="webhook_remove",
+                input={"name": "slack"},
+            )],
+            stop_reason="tool_use",
+        ),
+        AIResponse(content="done.", stop_reason="end_turn"),
+    ])
+    ensure_workspace(tmp_path)
+    ws = load_workspace(tmp_path)
+    turn = run_turn(
+        "close that webhook",
+        provider,
+        workspace = ws,
+        registry  = registry,
+    )
+
+    assert turn.final_text == "done."
+    assert registry.list() == []
+
+
+def test_cron_create_rejects_bad_tier(tmp_path: Path) -> None:
+    from assistant_cli.core import Scheduler
+    scheduler = Scheduler(tmp_path)
+
+    provider = FakeProvider([
+        AIResponse(
+            content="",
+            tool_calls=[ToolCall(
+                id="t1",
+                name="cron_create",
+                input={
+                    "name":             "x",
+                    "prompt":           "y",
+                    "interval_seconds": 60,
+                    "tier":             "godmode",
+                },
+            )],
+            stop_reason="tool_use",
+        ),
+        AIResponse(content="ok.", stop_reason="end_turn"),
+    ])
+    ensure_workspace(tmp_path)
+    ws = load_workspace(tmp_path)
+    turn = run_turn("bogus tier", provider, workspace=ws, scheduler=scheduler)
+
+    assert scheduler.list_jobs() == []
+    result = turn.tool_log[0]["result"]
+    assert "unknown tier" in str(result).lower()
+
+
+def test_autonomy_tools_are_classified_in_sandbox() -> None:
+    """Sandbox policy must know the new tools or REVIEW tier would block them."""
+    from assistant_cli.core.sandbox import TOOL_RISK, RiskLevel
+    assert TOOL_RISK["cron_create"]      == RiskLevel.WRITE
+    assert TOOL_RISK["cron_list"]        == RiskLevel.SAFE
+    assert TOOL_RISK["cron_delete"]      == RiskLevel.WRITE
+    assert TOOL_RISK["webhook_register"] == RiskLevel.WRITE
+    assert TOOL_RISK["webhook_list"]     == RiskLevel.SAFE
+    assert TOOL_RISK["webhook_remove"]   == RiskLevel.WRITE
+
+
 def test_run_turn_canvas_emit_without_canvas_returns_error() -> None:
     provider = FakeProvider([
         AIResponse(
@@ -966,6 +1178,16 @@ if __name__ == "__main__":
         ("run_turn_reflection_log_tool",        test_run_turn_reflection_log_tool),
         ("learning_suggest_rejects_invalid_target",
                                                 test_learning_suggest_rejects_invalid_target),
+        ("run_turn_cron_create_and_list_tools", test_run_turn_cron_create_and_list_tools),
+        ("run_turn_cron_delete_tool",           test_run_turn_cron_delete_tool),
+        ("cron_create_unavailable_without_scheduler",
+                                                test_cron_create_unavailable_without_scheduler),
+        ("run_turn_webhook_register_and_list_tools",
+                                                test_run_turn_webhook_register_and_list_tools),
+        ("run_turn_webhook_remove_tool",        test_run_turn_webhook_remove_tool),
+        ("cron_create_rejects_bad_tier",        test_cron_create_rejects_bad_tier),
+        ("autonomy_tools_are_classified_in_sandbox",
+                                                test_autonomy_tools_are_classified_in_sandbox),
     ]
     for name, fn in tests:
         try:

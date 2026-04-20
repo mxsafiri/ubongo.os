@@ -560,6 +560,126 @@ UBONGO_TOOLS: List[Dict[str, Any]] = [
             "required": ["doc_type", "name"],
         },
     },
+
+    # ── AUTONOMY: SCHEDULER ────────────────────────────────────────────
+    {
+        "name": "cron_create",
+        "description": (
+            "Schedule a recurring prompt the agent will re-enter on a timer. "
+            "Use for periodic checks (daily brief, hourly monitor). The "
+            "resulting session runs under the tier you set — default untrusted "
+            "so cron jobs can't silently mutate user state."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Short, unique label for the job (e.g. 'morning-brief').",
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "The prompt the agent will receive on each tick.",
+                },
+                "interval_seconds": {
+                    "type": "integer",
+                    "description": "How often the job fires. Minimum enforced by scheduler.",
+                },
+                "tier": {
+                    "type": "string",
+                    "enum": ["trusted", "review", "untrusted"],
+                    "description": "Sandbox tier for the cron session. Default 'untrusted'.",
+                },
+                "start_offset": {
+                    "type": "number",
+                    "description": "Seconds to wait before the first fire (negative = already due).",
+                },
+            },
+            "required": ["name", "prompt", "interval_seconds"],
+        },
+    },
+    {
+        "name": "cron_list",
+        "description": "List all scheduled jobs with their next-run timestamps.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "cron_delete",
+        "description": "Remove a scheduled job by its numeric id (from cron_list).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer",
+                    "description": "Job id returned by cron_create or cron_list.",
+                },
+            },
+            "required": ["id"],
+        },
+    },
+
+    # ── AUTONOMY: WEBHOOKS ─────────────────────────────────────────────
+    {
+        "name": "webhook_register",
+        "description": (
+            "Open a webhook channel so an external system can POST a payload "
+            "that becomes an agent turn. Use the optional 'secret' to require "
+            "HMAC-style signature verification. Default tier is 'untrusted' — "
+            "the agent must explicitly raise it if the source is trusted."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Path segment under /webhooks/ (e.g. 'github').",
+                },
+                "tier": {
+                    "type": "string",
+                    "enum": ["trusted", "review", "untrusted"],
+                    "description": "Sandbox tier for sessions triggered by this channel.",
+                },
+                "allow": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Tool names to explicitly allow regardless of tier.",
+                },
+                "deny": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Tool names to explicitly block regardless of tier.",
+                },
+                "addendum": {
+                    "type": "string",
+                    "description": "Extra instructions appended to the system prompt for this channel.",
+                },
+                "secret": {
+                    "type": "string",
+                    "description": "Shared secret for x-ubongo-signature verification.",
+                },
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "webhook_list",
+        "description": "List all registered webhook channels.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "webhook_remove",
+        "description": "Unregister a webhook channel by name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Channel name to remove.",
+                },
+            },
+            "required": ["name"],
+        },
+    },
 ]
 
 
@@ -576,6 +696,8 @@ def get_tools_for_tier(tier: str) -> List[Dict[str, Any]]:
         "memory_search", "memory_recall", "memory_save", "memory_forget",
         "web_search", "screen_control", "load_skill", "sessions_spawn",
         "canvas_emit", "learning_suggest", "reflection_log",
+        "cron_create", "cron_list", "cron_delete",
+        "webhook_register", "webhook_list", "webhook_remove",
     }
 
     if tier == "free":

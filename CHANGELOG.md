@@ -5,6 +5,37 @@ All notable changes to Ubongo OS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.9] - 2026-04-20
+
+### Added — Autonomy tools (cron + webhooks) exposed to the model
+
+The agent can now schedule itself and open webhook channels through
+the same `run_turn` pathway users drive. Previously these primitives
+lived on the Gateway but were only reachable via HTTP — so the LLM
+couldn't set up a morning brief or a GitHub webhook in response to a
+conversation.
+
+- **Six new model-callable tools**:
+  - `cron_create` — schedule a recurring prompt. Accepts name, prompt,
+    interval_seconds, tier (default 'untrusted'), optional start_offset.
+  - `cron_list` — enumerate scheduled jobs.
+  - `cron_delete` — remove a job by id.
+  - `webhook_register` — open a `/webhooks/{name}` channel with tier,
+    optional HMAC secret, allow/deny tool overrides, and prompt addendum.
+  - `webhook_list` — list registered channels.
+  - `webhook_remove` — unregister a channel by name.
+- **`run_turn` grew two optional kwargs**: `scheduler` and `registry`.
+  When absent, the matching tools return a clear "no scheduler/registry
+  wired" error instead of crashing — so tests and pre-gateway flows
+  keep working. Existing call sites are unaffected.
+- **Sandbox classification** for all six (CRUD = WRITE, list = SAFE).
+  REVIEW tier now gates both create and delete behind user approval;
+  UNTRUSTED webhook-triggered sessions can't self-schedule without an
+  explicit allow-list entry.
+- 7 new tests covering cron create/list/delete, webhook register/list/
+  remove, bad-tier rejection, no-scheduler fallback, and the sandbox
+  classification invariant.
+
 ## [0.5.8] - 2026-04-20
 
 ### Added — Typed A2UI event envelope
