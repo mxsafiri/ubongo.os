@@ -9,8 +9,12 @@ Layout:
     ├── ubongo.json         # config (managed by config.py)
     ├── AGENTS.md           # operational baseline + non-negotiable rules
     ├── SOUL.md             # personality, tone, name
+    ├── BOOTSTRAP.md        # onboarding script (first-run only)
+    ├── USER.md             # stable user profile — facts, prefs, hard-stops
     ├── TOOLS.md            # per-user tool conventions
     ├── MEMORY.md           # long-term facts (index-style)
+    ├── EVOLUTION.md        # candidate changes awaiting user review
+    ├── REFLECTION.md       # append-only hindsight journal
     ├── memory/             # daily episodic notes (YYYY-MM-DD.md)
     ├── sessions/           # append-only session event logs
     └── skills/<name>/SKILL.md   # task playbooks, lazy-loaded
@@ -97,6 +101,110 @@ Examples:
 - Project files default to ~/CascadeProjects/.
 """
 
+_DEFAULT_BOOTSTRAP_MD = """\
+# BOOTSTRAP.md — first-run onboarding
+
+*You just came online. No memory, no past. This file runs once.*
+
+Don't launch into "How can I help you today?" That answer is too small.
+Start with a conversation. Three things to settle, in order:
+
+## 1. Name
+Ask what the user wants to call you. Offer a few options only if they
+stall — never insist. When they pick one, write it into SOUL.md.
+
+## 2. Tone
+Four quick choices, in plain words:
+- calm and focused
+- warm and human
+- sharp and direct
+- playful and curious
+
+Mirror whatever they pick. Record it in SOUL.md.
+
+## 3. Boundaries
+Tell them, in one breath, what you will and won't do without asking:
+- risky actions pause for approval
+- private things stay private
+- nothing gets deleted silently
+
+Ask one question back: *"What should I never touch without asking?"*
+Write the answer into USER.md under Hard-stops.
+
+## When it feels settled
+Say something like:
+
+> Alright — I'm {name}. {tone in one phrase}. I'll ask before anything
+> risky. Let's get your hours back.
+
+Then update SOUL.md and USER.md with what you learned, and this file
+can stop mattering.
+
+*Don't read this every turn. It's here for onboarding; the identity
+files are where you actually live after that.*
+"""
+
+_DEFAULT_USER_MD = """\
+---
+version: 1
+---
+# USER.md — stable profile
+
+Only durable facts go here. If it changes week-to-week, keep it in
+the conversation, not this file.
+
+## Known facts
+- Name:
+- Timezone:
+- Primary machine:
+- Primary folders/apps:
+
+## Preferences
+- Communication style:
+- Automation tolerance:   ( ask / preview / just-do-it )
+- Favorite workflows:
+
+## Hard-stops  (never do these without explicit approval in the same turn)
+-
+
+## Safe to automate  (greenlit routines — run without asking)
+-
+"""
+
+_DEFAULT_EVOLUTION_MD = """\
+# EVOLUTION.md — candidate changes awaiting user review
+
+Ubongo proposes updates here. The user applies them by editing SOUL.md,
+USER.md, or TOOLS.md directly. Never mutate those files silently.
+
+## Format
+Each suggestion is a single block:
+
+    ### YYYY-MM-DD HH:MM — <target-file> / <kind>
+    **Summary:** one line on what to change and why.
+    **Patch:**
+    > the exact words or bullet to add/replace.
+    **Confidence:** 0.0–1.0
+    **Status:** pending | accepted | rejected
+
+## Pending
+*(Ubongo appends new suggestions above this line.)*
+"""
+
+_DEFAULT_REFLECTION_MD = """\
+# REFLECTION.md — hindsight journal
+
+Append-only. One entry per completed turn or daily summary, at the
+user's discretion. Answers four questions:
+
+- **What worked:**
+- **What didn't:**
+- **What was recovered:**
+- **What's still open:**
+
+## Entries
+"""
+
 _DEFAULT_DEMO_SKILL = """\
 ---
 name: organize-downloads
@@ -132,12 +240,16 @@ class SkillEntry:
 @dataclass
 class Workspace:
     """Resolved view of ~/.ubongo/ at runtime."""
-    root:     Path
-    agents:   str
-    soul:     str
-    tools:    str
-    memory:   str
-    skills:   List[SkillEntry]
+    root:       Path
+    agents:     str
+    soul:       str
+    tools:      str
+    memory:     str
+    user:       str
+    bootstrap:  str
+    evolution:  str
+    reflection: str
+    skills:     List[SkillEntry]
 
     @property
     def skills_dir(self) -> Path:
@@ -151,6 +263,14 @@ class Workspace:
     def episodic_dir(self) -> Path:
         return self.root / "memory"
 
+    @property
+    def evolution_path(self) -> Path:
+        return self.root / "EVOLUTION.md"
+
+    @property
+    def reflection_path(self) -> Path:
+        return self.root / "REFLECTION.md"
+
 
 # ── public API ──────────────────────────────────────────────────────────
 
@@ -163,10 +283,14 @@ def ensure_workspace(root: Optional[Path] = None) -> Path:
     root.mkdir(parents=True, exist_ok=True)
 
     seeds = {
-        root / "AGENTS.md": _DEFAULT_AGENTS_MD,
-        root / "SOUL.md":   _DEFAULT_SOUL_MD,
-        root / "TOOLS.md":  _DEFAULT_TOOLS_MD,
-        root / "MEMORY.md": _DEFAULT_MEMORY_MD,
+        root / "AGENTS.md":     _DEFAULT_AGENTS_MD,
+        root / "SOUL.md":       _DEFAULT_SOUL_MD,
+        root / "TOOLS.md":      _DEFAULT_TOOLS_MD,
+        root / "MEMORY.md":     _DEFAULT_MEMORY_MD,
+        root / "BOOTSTRAP.md":  _DEFAULT_BOOTSTRAP_MD,
+        root / "USER.md":       _DEFAULT_USER_MD,
+        root / "EVOLUTION.md":  _DEFAULT_EVOLUTION_MD,
+        root / "REFLECTION.md": _DEFAULT_REFLECTION_MD,
     }
     for path, body in seeds.items():
         if not path.exists():
@@ -195,12 +319,16 @@ def load_workspace(root: Optional[Path] = None) -> Workspace:
     root = ensure_workspace(root)
 
     return Workspace(
-        root   = root,
-        agents = _safe_read(root / "AGENTS.md"),
-        soul   = _safe_read(root / "SOUL.md"),
-        tools  = _safe_read(root / "TOOLS.md"),
-        memory = _safe_read(root / "MEMORY.md"),
-        skills = _discover_skills(root / "skills"),
+        root       = root,
+        agents     = _safe_read(root / "AGENTS.md"),
+        soul       = _safe_read(root / "SOUL.md"),
+        tools      = _safe_read(root / "TOOLS.md"),
+        memory     = _safe_read(root / "MEMORY.md"),
+        user       = _safe_read(root / "USER.md"),
+        bootstrap  = _safe_read(root / "BOOTSTRAP.md"),
+        evolution  = _safe_read(root / "EVOLUTION.md"),
+        reflection = _safe_read(root / "REFLECTION.md"),
+        skills     = _discover_skills(root / "skills"),
     )
 
 
@@ -209,16 +337,25 @@ def assemble_system_prompt(ws: Workspace, include_skills_index: bool = True) -> 
     Build the system prompt for one turn.
 
     Order matters:
-      1. SOUL  (identity + tone)
-      2. AGENTS (rules + non-negotiables)
-      3. MEMORY (long-term facts)
-      4. TOOLS (per-user conventions)
-      5. SKILLS INDEX (names + descriptions only — bodies loaded on demand)
+      1. SOUL   (identity + tone)
+      2. USER   (stable profile — name, prefs, hard-stops)
+      3. AGENTS (rules + non-negotiables)
+      4. MEMORY (long-term facts)
+      5. TOOLS  (per-user conventions)
+      6. SKILLS INDEX (names + descriptions only — bodies loaded on demand)
+
+    Deliberately excluded from every turn:
+      - BOOTSTRAP.md   (onboarding only; loaded via load_skill-style flow)
+      - EVOLUTION.md   (append-only candidate list; read by user, not model)
+      - REFLECTION.md  (post-turn journal; read on demand by tools)
     """
     parts: List[str] = []
 
     if ws.soul.strip():
         parts.append(_strip_md_frontmatter(ws.soul))
+
+    if ws.user.strip():
+        parts.append("# User profile\n" + _strip_md_frontmatter(ws.user))
 
     if ws.agents.strip():
         parts.append(_strip_md_frontmatter(ws.agents))

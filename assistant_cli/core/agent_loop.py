@@ -43,6 +43,11 @@ from assistant_cli.core.sandbox import (
 )
 from assistant_cli.core.sessions import Session, new_session_id, spawn_session
 from assistant_cli.core.canvas import Canvas
+from assistant_cli.core.reflection import (
+    LearningSuggestion,
+    append_suggestion,
+    append_reflection,
+)
 from assistant_cli.providers.base import AIResponse, ToolCall
 from assistant_cli.providers.tool_definitions import get_tools_for_tier
 from assistant_cli.utils.logger import logger
@@ -251,6 +256,10 @@ def _dispatch_tool(
         )
     if call.name == "canvas_emit":
         return _tool_canvas_emit(call.input, canvas=canvas, session=parent)
+    if call.name == "learning_suggest":
+        return _tool_learning_suggest(call.input, ws=ws, canvas=canvas, session=parent)
+    if call.name == "reflection_log":
+        return _tool_reflection_log(call.input, ws=ws, session=parent)
 
     if tool_executor is None:
         return {
@@ -337,6 +346,87 @@ def _tool_canvas_emit(
         return {"error": str(exc)}
 
     return {"emitted": True, "artifact": artifact.to_dict()}
+
+
+def _tool_learning_suggest(
+    payload: Dict[str, Any],
+    *,
+    ws:      Workspace,
+    canvas:  Optional[Canvas],
+    session: Optional[Session],
+) -> Dict[str, Any]:
+    """
+    Propose a durable update to SOUL.md / USER.md / TOOLS.md / MEMORY.md.
+
+    Never writes the target file directly — every suggestion lands in
+    EVOLUTION.md for the user to review. An artifact is also emitted on
+    the canvas so any live UI picks it up without polling.
+    """
+    p = payload or {}
+    try:
+        confidence = float(p.get("confidence", 0.5))
+    except (TypeError, ValueError):
+        return {"error": "learning_suggest 'confidence' must be a number between 0.0 and 1.0."}
+
+    try:
+        suggestion = LearningSuggestion(
+            target     = str(p.get("target",  "") or "").strip(),
+            kind       = str(p.get("kind",    "") or "").strip() or "note",
+            summary    = str(p.get("summary", "") or "").strip(),
+            patch      = str(p.get("patch",   "") or "").strip(),
+            confidence = confidence,
+            source     = "agent",
+        )
+    except Exception as exc:
+        return {"error": f"learning_suggest: {exc}"}
+
+    try:
+        block = append_suggestion(ws.evolution_path, suggestion)
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+    if canvas is not None:
+        try:
+            canvas.emit(
+                kind       = "learning_suggestion",
+                title      = f"{suggestion.target} / {suggestion.kind}",
+                payload    = suggestion.to_dict(),
+                session_id = session.id if session else None,
+            )
+        except ValueError:
+            pass
+
+    return {
+        "logged":     True,
+        "target":     suggestion.target,
+        "kind":       suggestion.kind,
+        "confidence": suggestion.confidence,
+        "block":      block,
+    }
+
+
+def _tool_reflection_log(
+    payload: Dict[str, Any],
+    *,
+    ws:      Workspace,
+    session: Optional[Session],
+) -> Dict[str, Any]:
+    """Append a structured hindsight entry to REFLECTION.md."""
+    p = payload or {}
+    sid = session.id if session else str(p.get("session_id", "") or "unknown")
+    try:
+        block = append_reflection(
+            ws.reflection_path,
+            session_id = sid,
+            worked     = str(p.get("worked",     "") or ""),
+            didnt_work = str(p.get("didnt_work", "") or ""),
+            recovered  = str(p.get("recovered",  "") or ""),
+            open_items = str(p.get("open_items", "") or ""),
+        )
+    except Exception as exc:
+        return {"error": f"reflection_log: {exc}"}
+
+    return {"logged": True, "session_id": sid, "block": block}
 
 
 def _tool_sessions_spawn(

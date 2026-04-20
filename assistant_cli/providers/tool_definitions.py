@@ -396,6 +396,74 @@ UBONGO_TOOLS: List[Dict[str, Any]] = [
         },
     },
 
+    # ── LEARNING SUGGEST (propose a durable change to workspace identity) ─
+    {
+        "name": "learning_suggest",
+        "description": (
+            "Propose a durable change to the user's identity files. Never "
+            "mutates SOUL.md / USER.md / TOOLS.md / MEMORY.md directly — "
+            "the suggestion is appended to EVOLUTION.md for the user to "
+            "review and apply. Use this when you notice a repeated "
+            "preference, a correction the user has made more than once, or "
+            "a hard-stop they've stated explicitly. Do NOT use it for "
+            "single-turn scratch facts — use memory_save for those."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "enum": ["SOUL.md", "USER.md", "TOOLS.md", "MEMORY.md"],
+                    "description": "Which identity file this suggestion is about.",
+                },
+                "kind": {
+                    "type": "string",
+                    "description": (
+                        "Short label for the change: 'preference', 'tone', "
+                        "'hard-stop', 'safe-default', 'workflow', etc."
+                    ),
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "One line on what to change and why.",
+                },
+                "patch": {
+                    "type": "string",
+                    "description": (
+                        "Exact text, bullet, or paragraph to add or replace. "
+                        "Keep it short and drop-in ready for the user."
+                    ),
+                },
+                "confidence": {
+                    "type": "number",
+                    "description": "0.0–1.0 — how durable this looks based on the evidence you have.",
+                },
+            },
+            "required": ["target", "summary", "patch"],
+        },
+    },
+
+    # ── REFLECTION LOG (post-turn / daily hindsight) ──────────────────
+    {
+        "name": "reflection_log",
+        "description": (
+            "Append a structured hindsight entry to REFLECTION.md. Four "
+            "fields — what worked, what didn't, what was recovered, what's "
+            "still open. Use this at the end of a non-trivial turn or when "
+            "summarizing a day. Empty fields are fine; the template fills "
+            "in dashes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "worked":     {"type": "string"},
+                "didnt_work": {"type": "string"},
+                "recovered":  {"type": "string"},
+                "open_items": {"type": "string"},
+            },
+        },
+    },
+
     # ── SESSIONS SPAWN (delegate a focused task to a sub-agent) ─────
     {
         "name": "sessions_spawn",
@@ -507,7 +575,7 @@ def get_tools_for_tier(tier: str) -> List[Dict[str, Any]]:
         "file_operation", "app_control", "system_info",
         "memory_search", "memory_recall", "memory_save", "memory_forget",
         "web_search", "screen_control", "load_skill", "sessions_spawn",
-        "canvas_emit",
+        "canvas_emit", "learning_suggest", "reflection_log",
     }
 
     if tier == "free":

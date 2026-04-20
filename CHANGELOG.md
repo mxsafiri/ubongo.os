@@ -5,6 +5,47 @@ All notable changes to Ubongo OS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.7] - 2026-04-20
+
+### Added — Identity files + learning pipeline
+
+The workspace now seeds the full identity contract, and the agent has
+a safe way to propose durable updates without silently mutating the
+user's files.
+
+- **Four new seeded files** in `~/.ubongo/`:
+  - `BOOTSTRAP.md` — one-time onboarding script (name, tone, boundaries).
+  - `USER.md` — stable profile: facts, prefs, hard-stops, safe-to-automate.
+  - `EVOLUTION.md` — append-only ledger of candidate changes awaiting
+    user review. Format: target-file, summary, patch, confidence, status.
+  - `REFLECTION.md` — append-only hindsight journal (what worked,
+    what didn't, what was recovered, what's still open).
+- **`USER.md` now injected into the system prompt** after SOUL, before
+  AGENTS. `BOOTSTRAP.md`, `EVOLUTION.md`, and `REFLECTION.md` are
+  deliberately *not* loaded every turn — onboarding is one-off, and the
+  other two are tool-accessed on demand.
+- **`core.reflection`** module with `LearningSuggestion` + writers
+  (`append_suggestion`, `append_reflection`) that validate inputs and
+  insert above the Pending sentinel in EVOLUTION.md so the newest
+  suggestion stays on top.
+- **Two new tools wired through `run_turn`**:
+  - `learning_suggest` — agent proposes a SOUL/USER/TOOLS/MEMORY update.
+    Always lands in EVOLUTION.md (never the target file). Also emits a
+    `learning_suggestion` canvas artifact so live UIs pick it up.
+  - `reflection_log` — structured post-turn hindsight into REFLECTION.md.
+  Both are `WRITE` risk — review/untrusted tiers gate them behind
+  approval.
+- 8 new tests (workspace seeds, prompt assembly, reflection writers,
+  learning_suggest / reflection_log tool paths, validation rejection).
+
+### Why
+"Self-learning" that rewrites SOUL/USER silently is indistinguishable
+from prompt drift. EVOLUTION.md makes every proposed change visible,
+dated, and reversible — the user stays the author of their companion.
+The BOOTSTRAP/USER files close the onboarding gap called out in the
+audit: the kernel primitives (soul files) are now reachable from the
+first-run experience.
+
 ## [0.5.6] - 2026-04-20
 
 ### Added — Primary user-turn entrypoint

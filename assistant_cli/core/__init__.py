@@ -36,6 +36,11 @@ from assistant_cli.core.channels import (
     default_registry,
 )
 from assistant_cli.core.canvas import Artifact, Canvas
+from assistant_cli.core.reflection import (
+    LearningSuggestion,
+    append_suggestion,
+    append_reflection,
+)
 
 __all__ = [
     "IntentParser",
@@ -69,4 +74,7 @@ __all__ = [
     "default_registry",
     "Artifact",
     "Canvas",
+    "LearningSuggestion",
+    "append_suggestion",
+    "append_reflection",
 ]

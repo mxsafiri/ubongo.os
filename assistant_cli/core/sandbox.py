@@ -71,6 +71,12 @@ TOOL_RISK: Dict[str, RiskLevel] = {
     # canvas emit — pushes a render artifact to the shared UI surface.
     "canvas_emit":    RiskLevel.WRITE,
 
+    # reflection / learning — append-only writes into workspace markdown.
+    # Suggestions land in EVOLUTION.md; hindsight in REFLECTION.md. Neither
+    # mutates SOUL/USER/TOOLS directly, so WRITE (not DESTRUCTIVE) is right.
+    "learning_suggest": RiskLevel.WRITE,
+    "reflection_log":   RiskLevel.WRITE,
+
     # file index (read-only — searches metadata, doesn't touch disk)
     "memory_search":  RiskLevel.SAFE,
 

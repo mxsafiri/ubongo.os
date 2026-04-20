@@ -41,12 +41,27 @@ from assistant_cli.providers.base import AIResponse, ToolCall
 
 def test_ensure_workspace_seeds_defaults(tmp_path: Path) -> None:
     ensure_workspace(tmp_path)
-    for fname in ("AGENTS.md", "SOUL.md", "TOOLS.md", "MEMORY.md"):
+    for fname in (
+        "AGENTS.md", "SOUL.md", "TOOLS.md", "MEMORY.md",
+        "BOOTSTRAP.md", "USER.md", "EVOLUTION.md", "REFLECTION.md",
+    ):
         assert (tmp_path / fname).is_file(), f"missing {fname}"
     assert (tmp_path / "skills" / "organize-downloads" / "SKILL.md").is_file()
     assert (tmp_path / "sessions").is_dir()
     assert (tmp_path / "memory").is_dir()
     assert (tmp_path / "credentials").is_dir()
+
+
+def test_assemble_system_prompt_includes_user_profile(tmp_path: Path) -> None:
+    ensure_workspace(tmp_path)
+    ws = load_workspace(tmp_path)
+    prompt = assemble_system_prompt(ws)
+    assert "User profile" in prompt
+    # BOOTSTRAP / EVOLUTION / REFLECTION are deliberately excluded
+    # from every-turn context.
+    assert "BOOTSTRAP" not in prompt
+    assert "EVOLUTION" not in prompt
+    assert "REFLECTION" not in prompt
 
 
 def test_ensure_workspace_does_not_overwrite(tmp_path: Path) -> None:
@@ -714,6 +729,157 @@ def test_run_turn_canvas_emit_tool() -> None:
     assert art.payload == {"body": "* step 1"}
 
 
+# ── reflection / learning pipeline ────────────────────────────────────
+
+def test_learning_suggestion_validation() -> None:
+    from assistant_cli.core import LearningSuggestion, append_suggestion
+    with tempfile.TemporaryDirectory() as tmp:
+        ensure_workspace(Path(tmp))
+        ws = load_workspace(Path(tmp))
+
+        # Bad target.
+        try:
+            append_suggestion(ws.evolution_path, LearningSuggestion(
+                target="ROGUE.md", kind="x", summary="y", patch="z",
+            ))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("expected ValueError for bad target")
+
+        # Out-of-range confidence.
+        try:
+            append_suggestion(ws.evolution_path, LearningSuggestion(
+                target="USER.md", kind="x", summary="y", patch="z", confidence=1.5,
+            ))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("expected ValueError for confidence > 1.0")
+
+
+def test_append_suggestion_inserts_above_sentinel(tmp_path: Path) -> None:
+    from assistant_cli.core import LearningSuggestion, append_suggestion
+    ensure_workspace(tmp_path)
+    ws = load_workspace(tmp_path)
+
+    append_suggestion(ws.evolution_path, LearningSuggestion(
+        target="USER.md", kind="preference",
+        summary="Prefers terse confirmations",
+        patch="- Communication style: terse, no preamble",
+        confidence=0.9,
+    ))
+    body = ws.evolution_path.read_text(encoding="utf-8")
+    # Entry appears BEFORE the sentinel, so newest is on top.
+    entry_pos    = body.find("Prefers terse confirmations")
+    sentinel_pos = body.find("Ubongo appends new suggestions")
+    assert 0 < entry_pos < sentinel_pos
+
+
+def test_append_reflection_appends_entry(tmp_path: Path) -> None:
+    from assistant_cli.core import append_reflection
+    ensure_workspace(tmp_path)
+    ws = load_workspace(tmp_path)
+
+    append_reflection(
+        ws.reflection_path,
+        session_id = "sess_abc",
+        worked     = "file sort preview",
+        didnt_work = "model retried itself twice",
+        recovered  = "user clarified the destination",
+    )
+    body = ws.reflection_path.read_text(encoding="utf-8")
+    assert "sess_abc" in body
+    assert "file sort preview" in body
+
+
+def test_run_turn_learning_suggest_tool(tmp_path: Path) -> None:
+    canvas = Canvas()
+    provider = FakeProvider([
+        AIResponse(
+            content="",
+            tool_calls=[ToolCall(
+                id="t1",
+                name="learning_suggest",
+                input={
+                    "target":     "USER.md",
+                    "kind":       "preference",
+                    "summary":    "User ignores long preambles",
+                    "patch":      "- Communication style: concise, no warm-ups",
+                    "confidence": 0.85,
+                },
+            )],
+            stop_reason="tool_use",
+        ),
+        AIResponse(content="suggestion logged.", stop_reason="end_turn"),
+    ])
+    ensure_workspace(tmp_path)
+    ws = load_workspace(tmp_path)
+    turn = run_turn("learn from me", provider, workspace=ws, canvas=canvas)
+
+    assert turn.final_text == "suggestion logged."
+    body = ws.evolution_path.read_text(encoding="utf-8")
+    assert "User ignores long preambles" in body
+    # Canvas artifact was also emitted so live UIs pick it up.
+    kinds = [a.kind for a in canvas.list()]
+    assert "learning_suggestion" in kinds
+
+
+def test_run_turn_reflection_log_tool(tmp_path: Path) -> None:
+    provider = FakeProvider([
+        AIResponse(
+            content="",
+            tool_calls=[ToolCall(
+                id="t1",
+                name="reflection_log",
+                input={
+                    "worked":     "canvas artifact rendering",
+                    "didnt_work": "initial schema was wrong",
+                    "recovered":  "user approved a fix",
+                    "open_items": "write more tests",
+                },
+            )],
+            stop_reason="tool_use",
+        ),
+        AIResponse(content="logged.", stop_reason="end_turn"),
+    ])
+    ensure_workspace(tmp_path)
+    ws = load_workspace(tmp_path)
+    from assistant_cli.core import open_session
+    session = open_session(channel="desktop")
+    turn = run_turn("log hindsight", provider, workspace=ws, session=session)
+
+    assert turn.final_text == "logged."
+    body = ws.reflection_path.read_text(encoding="utf-8")
+    assert session.id in body
+    assert "canvas artifact rendering" in body
+
+
+def test_learning_suggest_rejects_invalid_target(tmp_path: Path) -> None:
+    provider = FakeProvider([
+        AIResponse(
+            content="",
+            tool_calls=[ToolCall(
+                id="t1",
+                name="learning_suggest",
+                input={
+                    "target": "ROGUE.md", "kind": "x",
+                    "summary": "s", "patch": "p", "confidence": 0.5,
+                },
+            )],
+            stop_reason="tool_use",
+        ),
+        AIResponse(content="ack.", stop_reason="end_turn"),
+    ])
+    ensure_workspace(tmp_path)
+    ws = load_workspace(tmp_path)
+    turn = run_turn("try bad target", provider, workspace=ws)
+    # Tool returns error inline; EVOLUTION.md must NOT contain the patch.
+    body = ws.evolution_path.read_text(encoding="utf-8")
+    assert "ROGUE" not in body
+    assert "error" in str(turn.tool_log[0]["result"]).lower()
+
+
 def test_run_turn_canvas_emit_without_canvas_returns_error() -> None:
     provider = FakeProvider([
         AIResponse(
@@ -746,6 +912,8 @@ if __name__ == "__main__":
         ("ensure_workspace_does_not_overwrite", test_ensure_workspace_does_not_overwrite),
         ("load_workspace_returns_skill_index",  test_load_workspace_returns_skill_index),
         ("assemble_system_prompt_lists_skills", test_assemble_system_prompt_lists_skills),
+        ("assemble_system_prompt_includes_user_profile",
+                                                test_assemble_system_prompt_includes_user_profile),
         ("find_skill_case_insensitive",         test_find_skill_case_insensitive),
         ("run_turn_returns_text_immediately",   test_run_turn_returns_text_immediately),
         ("run_turn_executes_load_skill_tool",   test_run_turn_executes_load_skill_tool),
@@ -790,6 +958,14 @@ if __name__ == "__main__":
         ("run_turn_canvas_emit_tool",           test_run_turn_canvas_emit_tool),
         ("run_turn_canvas_emit_without_canvas_returns_error",
                                                 test_run_turn_canvas_emit_without_canvas_returns_error),
+        ("learning_suggestion_validation",      test_learning_suggestion_validation),
+        ("append_suggestion_inserts_above_sentinel",
+                                                test_append_suggestion_inserts_above_sentinel),
+        ("append_reflection_appends_entry",     test_append_reflection_appends_entry),
+        ("run_turn_learning_suggest_tool",      test_run_turn_learning_suggest_tool),
+        ("run_turn_reflection_log_tool",        test_run_turn_reflection_log_tool),
+        ("learning_suggest_rejects_invalid_target",
+                                                test_learning_suggest_rejects_invalid_target),
     ]
     for name, fn in tests:
         try:
