@@ -5,6 +5,45 @@ All notable changes to Ubongo OS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.4] - 2026-04-20
+
+### Added — Gateway control plane
+
+Phase 2 of the autonomous agent OS plan. The sidecar was a request/
+response server for the primary user; it's now a *gateway* that hosts
+every non-user input surface under one roof.
+
+- **`Gateway`** class mounted into the FastAPI sidecar. Owns a
+  `Scheduler`, a `WebhookRegistry`, and an `EventBus`, and hands the
+  sidecar an `APIRouter` to include. Dependency-injected `run_turn_fn`
+  keeps the HTTP surface testable without a live LLM.
+- **New routes**:
+  - `GET  /gateway/status`              — sessions, jobs, channels, subscribers
+  - `GET/POST/DELETE /gateway/channels` — webhook channel CRUD
+  - `GET/POST/DELETE /gateway/jobs`     — scheduled job CRUD
+  - `POST /webhooks/{name}`             — dispatch into a registered channel
+  - `WS   /gateway/stream`              — live event feed
+- **Scheduler pump** — asyncio background task ticks the `Scheduler`
+  every 5s and runs each due job through `run_turn` with the job's
+  declared sandbox tier. No new deps.
+- **Event bus** — bounded per-subscriber queues with drop-oldest
+  overflow, so a slow WebSocket client can't wedge the pump.
+- **Webhook signature check** — channels with a `secret` require a
+  matching `x-ubongo-signature` header (hmac-compared).
+- **SQLite stores opened with `check_same_thread=False`** so the
+  sidecar's worker-thread pool can touch them safely; WAL journal keeps
+  readers concurrent with the single writer.
+- New `test_gateway.py` with 10 smoke tests via FastAPI's TestClient +
+  a dummy turn runner. `fastapi` and `httpx` added to dev extras so
+  CI picks them up.
+
+### Why
+Autonomy primitives from Phase 6 need a process to live in. A cron
+job can't fire without a loop; a webhook can't be received without a
+server. The Gateway is that process — one place where every
+non-user-keyboard input enters the agent, each gated by the sandbox
+policy declared at registration.
+
 ## [0.5.3] - 2026-04-20
 
 ### Added — Autonomy primitives

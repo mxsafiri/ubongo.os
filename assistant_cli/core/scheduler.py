@@ -178,7 +178,10 @@ class Scheduler:
 
     def _db(self) -> sqlite3.Connection:
         if self._conn is None:
-            self._conn = sqlite3.connect(str(self.db_path))
+            # check_same_thread=False because FastAPI hands requests to a
+            # worker thread pool. SQLite itself serialises access; WAL
+            # journal lets readers run concurrently with the single writer.
+            self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
             self._conn.execute("PRAGMA journal_mode = WAL")
         return self._conn
 
