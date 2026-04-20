@@ -35,6 +35,7 @@ from assistant_cli.core.channels import (
     WebhookRegistry,
     default_registry,
 )
+from assistant_cli.core.canvas import Artifact, Canvas
 
 __all__ = [
     "IntentParser",
@@ -66,4 +67,6 @@ __all__ = [
     "WebhookChannel",
     "WebhookRegistry",
     "default_registry",
+    "Artifact",
+    "Canvas",
 ]

@@ -39,6 +39,7 @@ from pydantic import BaseModel, Field
 
 from assistant_cli.core import (
     AgentTurn,
+    Canvas,
     Scheduler,
     Session,
     SandboxPolicy,
@@ -128,6 +129,26 @@ class Gateway:
     _sessions:     Dict[str, Session] = field(default_factory=dict)
     _pump_task:    Optional[asyncio.Task] = None
     _stopping:     bool = False
+    canvas:        Canvas = field(init=False)
+
+    def __post_init__(self) -> None:
+        # Canvas fans out artifact changes onto the event bus so every
+        # WebSocket subscriber sees them live.
+        self.canvas = Canvas(on_change=self._on_canvas_change)
+
+    def _on_canvas_change(self, change: str, artifact) -> None:
+        event = {
+            "type":     "canvas_artifact",
+            "change":   change,
+            "artifact": artifact.to_dict(),
+            "ts":       time.time(),
+        }
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop (e.g. synchronous test): skip fan-out.
+            return
+        loop.create_task(self.bus.publish(event))
 
     # ── public API ──────────────────────────────────────────────────
 
@@ -140,8 +161,20 @@ class Gateway:
                 "sessions":    [s.to_dict() for s in self._sessions.values()],
                 "jobs":        [j.to_dict() for j in self.scheduler.list_jobs()],
                 "channels":    [c.to_dict() for c in self.registry.list()],
+                "artifacts":   len(self.canvas),
                 "subscribers": self.bus.subscriber_count,
             }
+
+        @r.get("/gateway/canvas")
+        def list_artifacts(session_id: Optional[str] = None) -> Dict[str, Any]:
+            items = self.canvas.list(session_id=session_id)
+            return {"artifacts": [a.to_dict() for a in items]}
+
+        @r.delete("/gateway/canvas/{artifact_id}")
+        def remove_artifact(artifact_id: str) -> Dict[str, Any]:
+            if not self.canvas.remove(artifact_id):
+                raise HTTPException(404, f"no artifact '{artifact_id}'")
+            return {"removed": artifact_id}
 
         @r.get("/gateway/channels")
         def list_channels() -> Dict[str, Any]:

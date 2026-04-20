@@ -354,6 +354,48 @@ UBONGO_TOOLS: List[Dict[str, Any]] = [
         },
     },
 
+    # ── CANVAS EMIT (render a rich artifact in the UI) ──────────────
+    {
+        "name": "canvas_emit",
+        "description": (
+            "Render a rich artifact on the shared canvas beside the chat. "
+            "Use this when the answer is better shown than said — a table "
+            "of results, a code snippet, a file list, a chart config, a "
+            "markdown block. The frontend picks a renderer based on `kind`. "
+            "Supply `id` on subsequent calls to update an existing artifact "
+            "in place (good for streaming progress)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "description": (
+                        "Renderer key. Common kinds: 'markdown', 'code', "
+                        "'table', 'file_list', 'chart', 'note'. Custom kinds "
+                        "work if the frontend knows about them."
+                    ),
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Short heading shown on the artifact card.",
+                },
+                "payload": {
+                    "type": "object",
+                    "description": "Kind-specific body passed to the renderer.",
+                },
+                "id": {
+                    "type": "string",
+                    "description": (
+                        "Optional stable id. Passing the same id again "
+                        "updates that artifact instead of creating a new one."
+                    ),
+                },
+            },
+            "required": ["kind", "title"],
+        },
+    },
+
     # ── SESSIONS SPAWN (delegate a focused task to a sub-agent) ─────
     {
         "name": "sessions_spawn",
@@ -465,6 +507,7 @@ def get_tools_for_tier(tier: str) -> List[Dict[str, Any]]:
         "file_operation", "app_control", "system_info",
         "memory_search", "memory_recall", "memory_save", "memory_forget",
         "web_search", "screen_control", "load_skill", "sessions_spawn",
+        "canvas_emit",
     }
 
     if tier == "free":

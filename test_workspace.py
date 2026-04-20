@@ -33,6 +33,7 @@ from assistant_cli.core.channels import (
     WebhookChannel,
     WebhookRegistry,
 )
+from assistant_cli.core.canvas import Canvas
 from assistant_cli.providers.base import AIResponse, ToolCall
 
 
@@ -628,6 +629,113 @@ def test_webhook_registry_rejects_empty_name() -> None:
         raise AssertionError("empty name should raise")
 
 
+# ── Phase 7: canvas tests ─────────────────────────────────────────────
+
+def test_canvas_emit_creates_artifact() -> None:
+    c = Canvas()
+    a = c.emit(kind="markdown", title="hello", payload={"body": "# hi"})
+    assert a.id and a.kind == "markdown" and a.title == "hello"
+    assert len(c) == 1
+    assert c.get(a.id).payload == {"body": "# hi"}
+
+
+def test_canvas_emit_rejects_empty_kind_or_title() -> None:
+    c = Canvas()
+    for kwargs in ({"kind": "", "title": "t"}, {"kind": "md", "title": ""}):
+        try:
+            c.emit(**kwargs)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected ValueError for {kwargs}")
+
+
+def test_canvas_update_and_remove() -> None:
+    c = Canvas()
+    a = c.emit(kind="note", title="v1", payload={"n": 1})
+    u = c.update(a.id, title="v2", payload={"n": 2})
+    assert u is not None and u.title == "v2" and u.payload == {"n": 2}
+    assert u.updated_at >= a.created_at
+    assert c.remove(a.id) is True
+    assert c.remove(a.id) is False
+
+
+def test_canvas_list_by_session() -> None:
+    c = Canvas()
+    c.emit(kind="note", title="a", session_id="s1")
+    c.emit(kind="note", title="b", session_id="s1")
+    c.emit(kind="note", title="c", session_id="s2")
+    assert len(c.list(session_id="s1")) == 2
+    assert len(c.list(session_id="s2")) == 1
+    assert len(c.list()) == 3
+
+
+def test_canvas_on_change_fires() -> None:
+    events: list[tuple[str, str]] = []
+    c = Canvas(on_change=lambda kind, art: events.append((kind, art.title)))
+    a = c.emit(kind="note", title="one")
+    c.update(a.id, title="one-updated")
+    c.remove(a.id)
+    assert [e[0] for e in events] == ["created", "updated", "removed"]
+
+
+def test_canvas_on_change_swallows_subscriber_errors() -> None:
+    def bad_sub(kind, art):
+        raise RuntimeError("boom")
+    c = Canvas(on_change=bad_sub)
+    # Should not raise.
+    a = c.emit(kind="note", title="x")
+    assert c.get(a.id) is not None
+
+
+def test_run_turn_canvas_emit_tool() -> None:
+    canvas = Canvas()
+    provider = FakeProvider([
+        AIResponse(
+            content="",
+            tool_calls=[ToolCall(
+                id="t1",
+                name="canvas_emit",
+                input={"kind": "markdown", "title": "plan", "payload": {"body": "* step 1"}},
+            )],
+            stop_reason="tool_use",
+        ),
+        AIResponse(content="rendered.", stop_reason="end_turn"),
+    ])
+    with tempfile.TemporaryDirectory() as tmp:
+        ensure_workspace(Path(tmp))
+        ws = load_workspace(Path(tmp))
+        turn = run_turn("show plan", provider, workspace=ws, canvas=canvas)
+
+    assert turn.final_text == "rendered."
+    assert len(canvas) == 1
+    art = canvas.list()[0]
+    assert art.kind == "markdown" and art.title == "plan"
+    assert art.payload == {"body": "* step 1"}
+
+
+def test_run_turn_canvas_emit_without_canvas_returns_error() -> None:
+    provider = FakeProvider([
+        AIResponse(
+            content="",
+            tool_calls=[ToolCall(
+                id="t1",
+                name="canvas_emit",
+                input={"kind": "note", "title": "t", "payload": {}},
+            )],
+            stop_reason="tool_use",
+        ),
+        AIResponse(content="ok.", stop_reason="end_turn"),
+    ])
+    with tempfile.TemporaryDirectory() as tmp:
+        ensure_workspace(Path(tmp))
+        ws = load_workspace(Path(tmp))
+        turn = run_turn("emit without canvas", provider, workspace=ws)
+
+    entry = turn.tool_log[0]
+    assert "no canvas" in str(entry["result"]).lower()
+
+
 # ── manual runner ──────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -672,6 +780,16 @@ if __name__ == "__main__":
         ("sessions_spawn_requires_task",        test_sessions_spawn_requires_task),
         ("webhook_registry_register_find_remove", test_webhook_registry_register_find_remove),
         ("webhook_registry_rejects_empty_name", test_webhook_registry_rejects_empty_name),
+        ("canvas_emit_creates_artifact",        test_canvas_emit_creates_artifact),
+        ("canvas_emit_rejects_empty_kind_or_title", test_canvas_emit_rejects_empty_kind_or_title),
+        ("canvas_update_and_remove",            test_canvas_update_and_remove),
+        ("canvas_list_by_session",              test_canvas_list_by_session),
+        ("canvas_on_change_fires",              test_canvas_on_change_fires),
+        ("canvas_on_change_swallows_subscriber_errors",
+                                                test_canvas_on_change_swallows_subscriber_errors),
+        ("run_turn_canvas_emit_tool",           test_run_turn_canvas_emit_tool),
+        ("run_turn_canvas_emit_without_canvas_returns_error",
+                                                test_run_turn_canvas_emit_without_canvas_returns_error),
     ]
     for name, fn in tests:
         try:

@@ -5,6 +5,36 @@ All notable changes to Ubongo OS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.5] - 2026-04-19
+
+### Added — Canvas pattern
+
+Phase 7 of the autonomous agent OS plan. The agent can now emit
+structured *artifacts* — markdown plans, notes, tables, anything the
+frontend knows how to render — instead of only returning flat text.
+
+- **`Artifact`** and **`Canvas`** in `assistant_cli.core.canvas`.
+  Thread-safe in-memory store with CRUD + `on_change` hook; artifacts
+  carry `kind`, `title`, `payload`, optional `session_id`, and stable
+  timestamps.
+- **`canvas_emit` tool** wired through `run_turn`. Declared under the
+  `WRITE` risk level so UNTRUSTED sessions can't silently mutate the
+  shared surface. Missing-canvas paths return a tool error instead of
+  a hard crash, matching how other optional tools fail soft.
+- **Gateway integration** — `Gateway` now owns a `Canvas` whose
+  `on_change` publishes `canvas_artifact` events onto the EventBus,
+  so every WebSocket subscriber sees creates/updates/removes live.
+  New routes: `GET /gateway/canvas` (list; optional `session_id`
+  filter) and `DELETE /gateway/canvas/{id}`.
+- Canvas count now appears in `/gateway/status`.
+- 8 canvas unit tests + 2 gateway canvas tests.
+
+### Why
+Chat transcripts are a bad fit for plans, tables, and anything the
+user wants to keep around. Giving the agent a typed surface to render
+into — separate from the conversation log — is what makes the
+multi-turn autonomous work visible without drowning the chat history.
+
 ## [0.5.4] - 2026-04-20
 
 ### Added — Gateway control plane

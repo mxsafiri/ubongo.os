@@ -42,6 +42,7 @@ from assistant_cli.core.sandbox import (
     always_deny,
 )
 from assistant_cli.core.sessions import Session, new_session_id, spawn_session
+from assistant_cli.core.canvas import Canvas
 from assistant_cli.providers.base import AIResponse, ToolCall
 from assistant_cli.providers.tool_definitions import get_tools_for_tier
 from assistant_cli.utils.logger import logger
@@ -72,6 +73,7 @@ def run_turn(
     sandbox:        Optional[SandboxPolicy]        = None,
     approver:       Optional[Approver]             = None,
     session:        Optional[Session]              = None,
+    canvas:         Optional[Canvas]               = None,
     max_steps:      int                            = 8,
 ) -> AgentTurn:
     """
@@ -189,6 +191,7 @@ def run_turn(
                     tool_executor = tool_executor,
                     provider      = provider,
                     parent        = session,
+                    canvas        = canvas,
                 )
 
             pending_tool_results.append({"id": call.id, "name": call.name, "result": result})
@@ -227,6 +230,7 @@ def _dispatch_tool(
     tool_executor: Optional[ToolExecutor],
     provider: Any = None,
     parent: Optional[Session] = None,
+    canvas: Optional[Canvas] = None,
 ) -> Any:
     """Route a tool call to a workspace built-in, then to the executor."""
     if call.name == "load_skill":
@@ -245,6 +249,8 @@ def _dispatch_tool(
             memory   = memory,
             parent   = parent,
         )
+    if call.name == "canvas_emit":
+        return _tool_canvas_emit(call.input, canvas=canvas, session=parent)
 
     if tool_executor is None:
         return {
@@ -295,6 +301,42 @@ def _tool_memory_forget(payload: Dict[str, Any], mem: SemanticMemory) -> Dict[st
         return {"error": "memory_forget requires an integer 'id'."}
     removed = mem.forget(fact_id)
     return {"forgotten": removed, "id": fact_id}
+
+
+def _tool_canvas_emit(
+    payload: Dict[str, Any],
+    *,
+    canvas:  Optional[Canvas],
+    session: Optional[Session],
+) -> Dict[str, Any]:
+    """Push an artifact onto the shared canvas."""
+    if canvas is None:
+        return {
+            "error": (
+                "canvas_emit called but no canvas is attached to this turn — "
+                "the integration layer needs to pass one."
+            )
+        }
+
+    p = payload or {}
+    kind  = str(p.get("kind", "") or "").strip()
+    title = str(p.get("title", "") or "").strip()
+    body  = p.get("payload") or {}
+    if not isinstance(body, dict):
+        return {"error": "canvas_emit 'payload' must be an object."}
+
+    try:
+        artifact = canvas.emit(
+            kind       = kind,
+            title      = title,
+            payload    = body,
+            session_id = session.id if session else None,
+            id         = p.get("id"),
+        )
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+    return {"emitted": True, "artifact": artifact.to_dict()}
 
 
 def _tool_sessions_spawn(

@@ -196,6 +196,48 @@ def test_tick_once_runs_due_jobs(tmp_path: Path) -> None:
     assert session_ids_2 == []
 
 
+# ── canvas surface ───────────────────────────────────────────────────
+
+def test_gateway_canvas_listing(tmp_path: Path) -> None:
+    gw  = _build_gateway(tmp_path)
+    app = _build_app(gw)
+    # Emit directly via the gateway's canvas; simulates what the agent_loop
+    # would do when run_turn passes gw.canvas in.
+    gw.canvas.emit(kind="note", title="tick 1", payload={"n": 1}, session_id="s1")
+    gw.canvas.emit(kind="note", title="tick 2", payload={"n": 2}, session_id="s2")
+
+    with TestClient(app) as client:
+        r = client.get("/gateway/canvas")
+        assert r.status_code == 200
+        assert len(r.json()["artifacts"]) == 2
+
+        r = client.get("/gateway/canvas", params={"session_id": "s1"})
+        assert [a["title"] for a in r.json()["artifacts"]] == ["tick 1"]
+
+        art_id = r.json()["artifacts"][0]["id"]
+        r = client.delete(f"/gateway/canvas/{art_id}")
+        assert r.status_code == 200
+        r = client.delete(f"/gateway/canvas/{art_id}")
+        assert r.status_code == 404
+
+
+def test_gateway_canvas_change_publishes_event(tmp_path: Path) -> None:
+    gw = _build_gateway(tmp_path)
+
+    async def scenario() -> None:
+        q = gw.bus.subscribe()
+        gw.canvas.emit(kind="markdown", title="plan", payload={"body": "x"})
+        # on_change runs synchronously and schedules an async publish;
+        # yielding lets that task run.
+        await asyncio.sleep(0)
+        event = await asyncio.wait_for(q.get(), timeout=1.0)
+        assert event["type"] == "canvas_artifact"
+        assert event["change"] == "created"
+        assert event["artifact"]["title"] == "plan"
+
+    asyncio.run(scenario())
+
+
 # ── event bus behaviour ──────────────────────────────────────────────
 
 def test_event_bus_drops_oldest_when_full() -> None:
@@ -230,6 +272,8 @@ if __name__ == "__main__":
         ("webhook_requires_signature_when_secret_set",
                                                   test_webhook_requires_signature_when_secret_set),
         ("tick_once_runs_due_jobs",               test_tick_once_runs_due_jobs),
+        ("gateway_canvas_listing",                test_gateway_canvas_listing),
+        ("gateway_canvas_change_publishes_event", test_gateway_canvas_change_publishes_event),
         ("event_bus_drops_oldest_when_full",      test_event_bus_drops_oldest_when_full),
     ]
     for name, fn in tests:

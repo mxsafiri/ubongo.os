@@ -68,6 +68,9 @@ TOOL_RISK: Dict[str, RiskLevel] = {
     # the spawn itself is just WRITE (records a session) at this layer.
     "sessions_spawn": RiskLevel.WRITE,
 
+    # canvas emit — pushes a render artifact to the shared UI surface.
+    "canvas_emit":    RiskLevel.WRITE,
+
     # file index (read-only — searches metadata, doesn't touch disk)
     "memory_search":  RiskLevel.SAFE,
 
