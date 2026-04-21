@@ -46,7 +46,7 @@ def main():
     result = subprocess.run(cmd, cwd=str(ROOT))
 
     if result.returncode != 0:
-        print("\n✗ Build failed!")
+        print("\n[FAIL] Build failed!")
         sys.exit(1)
 
     # Verify output
@@ -54,11 +54,11 @@ def main():
     binary_path = DIST / binary_name
 
     if not binary_path.exists():
-        print(f"\n✗ Expected binary not found at {binary_path}")
+        print(f"\n[FAIL] Expected binary not found at {binary_path}")
         sys.exit(1)
 
     size_mb = binary_path.stat().st_size / (1024 * 1024)
-    print(f"\n✓ Built successfully!")
+    print(f"\n[OK] Built successfully!")
     print(f"  Binary: {binary_path}")
     print(f"  Size:   {size_mb:.1f} MB")
     print(f"  OS:     {system}")
