@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { LayoutGroup, motion, AnimatePresence, useScroll, useTransform } from 'motion/react'
-import { TextRotate } from '@/components/ui/text-rotate'
+import { motion, AnimatePresence, useScroll, useTransform } from 'motion/react'
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Prevent theme flash
@@ -355,35 +354,28 @@ export default function App() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.4, duration: 0.6, ease: [0.25, 0.1, 0, 1] }}
               >
-                GET YOUR{' '}
-                <LayoutGroup>
-                  <motion.span layout className="inline-flex">
-                    <TextRotate
-                      texts={['HOURS', 'FOCUS', 'DAY', 'FLOW', 'EVENINGS']}
-                      mainClassName="overflow-hidden"
-                      elementLevelClassName="accent-text"
-                      staggerDuration={0.02}
-                      staggerFrom="first"
-                      rotationInterval={3000}
-                      transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-                    />
-                  </motion.span>
-                </LayoutGroup>
-                <br />
-                BACK.
+                SPEAK WITH YOUR<br />
+                COMPUTER AND{' '}
+                <span className="accent-text">WATCH IT</span><br />
+                COME TO LIFE.
               </motion.h1>
 
-              {/* Bridge line — names the mechanism */}
-              <motion.p
-                className="font-mono text-[13px] sm:text-[14px] leading-relaxed mb-6 max-w-md"
-                style={{ color: 'var(--text-muted)' }}
+              {/* Supporting lines */}
+              <motion.div
+                className="mb-6 space-y-2 max-w-md"
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.6, duration: 0.5, ease: [0.25, 0.1, 0, 1] }}
               >
-                Put your computer to work.{' '}
-                <span style={{ color: 'var(--text-strong)' }}>Just say the word.</span>
-              </motion.p>
+                <p className="font-mono text-[13px] sm:text-[14px] leading-relaxed flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
+                  <span style={{ color: 'var(--accent)' }}>›</span>
+                  Teach what you need.
+                </p>
+                <p className="font-mono text-[13px] sm:text-[14px] leading-relaxed flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
+                  <span style={{ color: 'var(--accent-cool)' }}>›</span>
+                  It can help you get it done.
+                </p>
+              </motion.div>
             </motion.div>
 
             {/* Layer 3: Terminal (inverse parallax — moves slightly down, feels closer) */}
