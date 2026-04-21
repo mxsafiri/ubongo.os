@@ -5,6 +5,43 @@ All notable changes to Ubongo OS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.10] - 2026-04-21
+
+### Added — First-launch onboarding wizard (name + tone + invite)
+
+After users install the DMG, the first thing they saw was a blank
+invite-code field. The app never asked what to call the assistant, or
+how it should speak. This turns the single-step invite gate into a
+four-step wizard that mirrors the landing-page aesthetic (mono labels,
+section-number dividers, hairline accents, indigo/violet gradient).
+
+- **Four steps** (`desktop/src/components/Onboarding.tsx`):
+  - `001 · WELCOME` — orb, UBONGO wordmark, "BUILT IN TANZANIA" footer,
+    single BEGIN call-to-action.
+  - `002 · NAME` — 32-char input with Pencil icon and three starter
+    chips (Ubongo / Mshikaji / Akili). Swahili names highlighted in
+    the helper copy.
+  - `003 · TONE` — three cards (CONCISE / WARM / FORMAL), each with a
+    one-line register blurb. Heading uses the name chosen in step 2
+    ("How should Mshikaji talk to you?").
+  - `004 · INVITE` — existing closed-beta invite-code flow preserved
+    (validating / success / error phases, Enter-to-submit, "Request an
+    invite" link out to the landing page).
+- **Profile persistence** — `OnboardingProfile { agentName, tone,
+  completedAt }` lands in `localStorage['ubongo.profile.v1']` on
+  successful activation. Exported `loadProfile()` helper reads it back.
+  Pure-frontend: no new Tauri commands or Python endpoints needed —
+  the LLM runtime can pick up the profile whenever it catches up.
+- **App.tsx wire-up** — the always-visible ask bar placeholder now
+  reads `Ask ${profile.agentName || 'ubongo'}`, so the assistant's
+  chosen name is visible in every state after onboarding completes.
+- **Step-ladder chrome** — numbered `001 002 003 004` progress indicator
+  across the top with hairline connectors that fill indigo as the user
+  advances. `AnimatePresence` with `mode="wait"` + single-child keyed
+  wrapper for clean transitions between steps.
+- Guarded `goNext` / `goBack` to use functional state (`s < 4 ? s+1 : s`)
+  so rapid clicks can't push `step` past 4 (would have rendered blank).
+
 ## [0.5.9] - 2026-04-20
 
 ### Added — Autonomy tools (cron + webhooks) exposed to the model

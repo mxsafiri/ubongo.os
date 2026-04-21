@@ -8,7 +8,7 @@ import { ThinkingIndicator } from "@/components/ThinkingIndicator";
 import Plan, { type Task } from "@/components/ui/agent-plan";
 import { ActionBar } from "@/components/ActionBar";
 import { ResponseRenderer } from "@/components/ResponseRenderer";
-import { Onboarding } from "@/components/Onboarding";
+import { Onboarding, loadProfile, type OnboardingProfile } from "@/components/Onboarding";
 
 /**
  * App states:
@@ -34,12 +34,17 @@ export default function App() {
   // ── Onboarding gate ──────────────────────────────────────────────
   // `null` while checking, `true` once validated, `false` → show Onboarding
   const [onboarded, setOnboarded] = useState<boolean | null>(null);
+  const [profile, setProfile] = useState<OnboardingProfile | null>(() => loadProfile());
 
   useEffect(() => {
     invoke<{ onboarded: boolean }>("onboarding_status")
       .then((d) => setOnboarded(Boolean(d?.onboarded)))
       .catch(() => setOnboarded(false)); // if server unreachable, show onboarding
   }, []);
+
+  // Chosen agent name drives the ask-bar placeholder; fallback stays neutral.
+  const agentName = profile?.agentName?.trim() || "ubongo";
+  const askPlaceholder = `Ask ${agentName}`;
 
   // Status polling
   const refreshStatus = useCallback(async () => {
@@ -211,7 +216,12 @@ export default function App() {
         className="fixed inset-0 flex items-center justify-center px-6 z-10 cursor-grab active:cursor-grabbing"
       >
         <div onMouseDown={(e) => e.stopPropagation()}>
-          <Onboarding onComplete={() => setOnboarded(true)} />
+          <Onboarding
+            onComplete={() => {
+              setProfile(loadProfile());
+              setOnboarded(true);
+            }}
+          />
         </div>
       </div>
     );
@@ -348,6 +358,7 @@ export default function App() {
           ref={askBarRef}
           onSubmit={handleSubmit}
           isRunning={isRunning}
+          placeholder={askPlaceholder}
         />
       </div>
     </div>
