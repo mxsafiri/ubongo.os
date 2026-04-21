@@ -496,10 +496,10 @@ export default function App() {
 
         <div className="space-y-3 max-w-lg">
           {[
-            { n: '01', title: 'INSTALL', desc: 'Open .dmg, drag to Applications', code: null },
-            { n: '02', title: 'OPEN', desc: 'Right-click \u2192 Open (bypass unsigned warning)', code: null },
-            { n: '03', title: 'TERMINAL', desc: 'Or remove quarantine flag:', code: 'xattr -dr com.apple.quarantine /Applications/ubongo.app' },
-            { n: '04', title: 'ACTIVATE', desc: 'Enter invite code on first launch', code: null },
+            { n: '01', title: 'INSTALL', desc: 'Open .dmg, drag ubongo to Applications', code: null },
+            { n: '02', title: 'UNLOCK', desc: 'Run this in Terminal to clear Apple\u2019s quarantine flag (required \u2014 macOS blocks unsigned apps):', code: 'xattr -dr com.apple.quarantine /Applications/ubongo.app' },
+            { n: '03', title: 'OPEN', desc: 'Launch ubongo from Applications. If blocked, go to System Settings \u2192 Privacy & Security \u2192 click \u201COpen Anyway\u201D.', code: null },
+            { n: '04', title: 'ACTIVATE', desc: 'Enter your invite code on first launch', code: null },
           ].map((s, i) => (
             <Reveal key={s.n} delay={0.06 + i * 0.04} rotate={i % 2 === 0 ? -1 : 1}>
               <div className="card flex gap-4 items-start">
