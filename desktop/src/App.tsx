@@ -70,8 +70,9 @@ export default function App() {
   const dragStartRef = useRef<{ px: number; py: number; ox: number; oy: number } | null>(null);
 
   const handleOrbDragStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    // Only drag from the ring/background area — not from the orb or tile buttons.
-    if ((e.target as HTMLElement).closest("button")) return;
+    // Only drag from the ring/background area — not from buttons, inputs, or
+    // the response card ([data-no-drag]).
+    if ((e.target as HTMLElement).closest("button, input, textarea, [data-no-drag]")) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     e.stopPropagation(); // prevent Tauri window drag region from taking over
     dragStartRef.current = { px: e.clientX, py: e.clientY, ox: orbPos.x, oy: orbPos.y };
@@ -82,7 +83,7 @@ export default function App() {
     if (!dragStartRef.current) return;
     const dx = e.clientX - dragStartRef.current.px;
     const dy = e.clientY - dragStartRef.current.py;
-    const half = 210; // roughly half the orbital widget width/height
+    const half = 265; // half of max widget width (520px response card) + buffer
     const nx = Math.max(half, Math.min(window.innerWidth  - half, dragStartRef.current.ox + dx));
     const ny = Math.max(half, Math.min(window.innerHeight - half, dragStartRef.current.oy + dy));
     setOrbPos({ x: nx, y: ny });
@@ -336,61 +337,75 @@ export default function App() {
   }
 
   return (
+    // Transparent fullscreen backdrop — Tauri drag region for OS-level drags
+    // outside the widget. The widget itself stops propagation so it doesn't
+    // fight the OS drag when the user repositions the orb.
     <div
       data-tauri-drag-region
-      className="fixed inset-0 flex flex-col z-10 cursor-grab active:cursor-grabbing"
+      className="fixed inset-0 z-10"
     >
-      {/* ── FLOATING ORB WIDGET — absolutely positioned, draggable ── */}
-      <AnimatePresence>
-        {view === "orbital" && (
-          <motion.div
-            key="orb-widget"
-            className="fixed z-20 select-none"
-            style={{
-              left: orbPos.x,
-              top: orbPos.y,
-              x: "-50%",
-              y: "-50%",
-              cursor: isDraggingOrb ? "grabbing" : "default",
-            }}
-            initial={{ opacity: 0, scale: 0.92 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.92 }}
-            transition={{ duration: 0.28, ease: [0.2, 0.65, 0.3, 0.9] }}
-            onPointerDown={handleOrbDragStart}
-            onPointerMove={handleOrbDragMove}
-            onPointerUp={handleOrbDragEnd}
-            onPointerCancel={handleOrbDragEnd}
-          >
-            <OrbitalView
-              onNodeClick={handleNodeClick}
-              onOrbClick={handleOrbClick}
-              onOrbHoldStart={handleOrbHoldStart}
-              onOrbHoldEnd={handleOrbHoldEnd}
-              isRunning={isRunning}
-              isListening={isListening}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ── CONTENT AREA — responding view only ── */}
-      <div className="flex-1 min-h-0 flex items-center justify-center px-6 pt-6 pb-2 overflow-hidden">
+      {/* ── SINGLE FLOATING WIDGET ────────────────────────────────────
+          Orb · response card · ask bar all travel together.
+          Drag from the ring area (non-button, non-input) to reposition.
+      ─────────────────────────────────────────────────────────────── */}
+      <motion.div
+        className="fixed z-20 flex flex-col items-center gap-3 select-none"
+        style={{
+          left: orbPos.x,
+          top: orbPos.y,
+          x: "-50%",
+          y: "-50%",
+          cursor: isDraggingOrb ? "grabbing" : "default",
+        }}
+        initial={{ opacity: 0, scale: 0.92 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.28, ease: [0.2, 0.65, 0.3, 0.9] }}
+        onPointerDown={handleOrbDragStart}
+        onPointerMove={handleOrbDragMove}
+        onPointerUp={handleOrbDragEnd}
+        onPointerCancel={handleOrbDragEnd}
+      >
+        {/* ── Orbital orb + tiles / responding card ── */}
         <AnimatePresence mode="wait">
+          {view === "orbital" && (
+            <motion.div
+              key="orbital"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.25, ease: [0.2, 0.65, 0.3, 0.9] }}
+            >
+              <OrbitalView
+                onNodeClick={handleNodeClick}
+                onOrbClick={handleOrbClick}
+                onOrbHoldStart={handleOrbHoldStart}
+                onOrbHoldEnd={handleOrbHoldEnd}
+                isRunning={isRunning}
+                isListening={isListening}
+              />
+            </motion.div>
+          )}
+
           {view === "responding" && (
             <motion.div
               key="responding"
-              className="liquid-glass flex flex-col items-center w-[680px] max-w-full max-h-full rounded-[28px] py-5 px-5 gap-3 overflow-y-auto"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
+              className="liquid-glass flex flex-col items-center w-[520px] max-w-[90vw] max-h-[65vh] rounded-[28px] py-5 px-5 gap-3 overflow-y-auto"
+              data-no-drag
+              initial={{ opacity: 0, y: 10, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -10, scale: 0.96 }}
               transition={{ duration: 0.25, ease: [0.2, 0.65, 0.3, 0.9] }}
             >
-              {/* Small orb at top while responding */}
+              {/* Small orb at top — click to dismiss and return to orbital */}
               <motion.div
                 className="cursor-pointer"
                 onClick={() => {
-                  if (!isRunning) setView("orbital");
+                  if (!isRunning) {
+                    setView("orbital");
+                    setResponse(null);
+                    setResponseCards([]);
+                    setAgentTasks([]);
+                  }
                 }}
                 whileHover={{ scale: 1.1 }}
               >
@@ -400,11 +415,11 @@ export default function App() {
                 </div>
               </motion.div>
 
-              {/* Thinking indicator — shown during initial phase before tool steps arrive */}
+              {/* Thinking indicator */}
               {isRunning &&
                 responseCards.length === 0 &&
                 (agentTasks.length === 0 ||
-                  (agentTasks.length === 1 && agentTasks[0].id === "thinking")) && (
+                  agentTasks[0].id === "thinking") && (
                   <motion.div
                     className="w-full"
                     initial={{ opacity: 0, y: 6 }}
@@ -415,16 +430,16 @@ export default function App() {
                   </motion.div>
                 )}
 
-              {/* Agent plan — show once real tool steps exist, hide when cards arrive */}
+              {/* Agent plan */}
               {agentTasks.length > 0 &&
-                !(agentTasks.length === 1 && agentTasks[0].id === "thinking") &&
+                agentTasks[0].id !== "thinking" &&
                 responseCards.length === 0 && (
                   <div className="w-full">
                     <Plan tasks={agentTasks} />
                   </div>
                 )}
 
-              {/* CARDS ARE THE PRIMARY RESPONSE — visual first */}
+              {/* Cards — primary response */}
               {responseCards.length > 0 && (
                 <motion.div
                   className="w-full"
@@ -438,13 +453,18 @@ export default function App() {
                     model={null}
                     onActionTap={handleSubmit}
                     onMusicAction={(action) => {
-                      handleSubmit(action === "pause" ? "pause music" : action === "next" ? "next track" : action === "previous" ? "previous track" : "play music");
+                      handleSubmit(
+                        action === "pause" ? "pause music"
+                        : action === "next" ? "next track"
+                        : action === "previous" ? "previous track"
+                        : "play music"
+                      );
                     }}
                   />
                 </motion.div>
               )}
 
-              {/* Text footnote below cards */}
+              {/* Text footnote */}
               {response && (
                 <motion.div
                   className="w-full"
@@ -462,25 +482,26 @@ export default function App() {
                 </motion.div>
               )}
 
-              {/* Action bar */}
               <ActionBar hasResults={true} status={status} />
             </motion.div>
           )}
         </AnimatePresence>
-      </div>
 
-      {/* ── ALWAYS-VISIBLE ASK BAR (pinned to bottom of screen) ── */}
-      <div
-        className="shrink-0 flex justify-center pb-4 pt-1 px-4"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <AskBar
-          ref={askBarRef}
-          onSubmit={handleSubmit}
-          isRunning={isRunning}
-          placeholder={askPlaceholder}
-        />
-      </div>
+        {/* ── Ask bar — always visible, travels with the widget ── */}
+        <div
+          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="w-full flex justify-center"
+        >
+          <AskBar
+            ref={askBarRef}
+            onSubmit={handleSubmit}
+            isRunning={isRunning}
+            placeholder={askPlaceholder}
+            width={480}
+          />
+        </div>
+      </motion.div>
     </div>
   );
 }
