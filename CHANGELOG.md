@@ -33,6 +33,27 @@ Tap (< 300 ms) still focuses the ask bar as before.
 - Zero backend coupling — no new Tauri commands, no Python deps, no
   `requirements.txt` changes. Pure frontend.
 
+### Added — Draggable floating orb widget
+
+The Tauri window is fullscreen transparent; the orb was previously
+locked to the flex-center of that window. It can now be dragged freely
+to any position on screen.
+
+- **Drag from the ring area** (anywhere that isn't an orb button or a
+  tile button) moves the widget. Uses `setPointerCapture` so drags
+  don't break when the pointer drifts off the element.
+- **Bounds clamping** prevents the widget from being dragged fully
+  off-screen (minimum 210 px inset on all edges).
+- **Position persists** to `localStorage['ubongo.orb.pos.v1']` on drag
+  end — the orb remembers where the user left it between sessions.
+  First launch defaults to horizontally centred, ~42 % down the screen.
+- **Orb lifted out of the flex-center layout** into its own
+  `position: fixed` layer so the responding-view card can still use
+  the content area without fighting the orb for layout space.
+- `e.stopPropagation()` in `handleOrbDragStart` prevents the Tauri
+  `data-tauri-drag-region` from also firing OS-level window drag during
+  an orb drag gesture.
+
 ## [0.5.10] - 2026-04-21
 
 ### Added — First-launch onboarding wizard (name + tone + invite)

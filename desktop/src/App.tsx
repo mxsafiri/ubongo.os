@@ -46,6 +46,57 @@ export default function App() {
   const agentName = profile?.agentName?.trim() || "ubongo";
   const askPlaceholder = `Ask ${agentName}`;
 
+  // ── Draggable orb position ────────────────────────────────────────
+  // The Tauri window is fullscreen transparent, so we float the orb
+  // widget within the screen using CSS position. Position persists to
+  // localStorage between sessions.
+
+  const ORB_POS_KEY = "ubongo.orb.pos.v1";
+
+  const loadOrbPos = () => {
+    try {
+      const raw = localStorage.getItem(ORB_POS_KEY);
+      if (raw) {
+        const p = JSON.parse(raw) as { x: number; y: number };
+        if (typeof p.x === "number" && typeof p.y === "number") return p;
+      }
+    } catch {}
+    // Default: horizontally centred, slightly above middle
+    return { x: window.innerWidth / 2, y: Math.round(window.innerHeight * 0.42) };
+  };
+
+  const [orbPos, setOrbPos] = useState<{ x: number; y: number }>(loadOrbPos);
+  const [isDraggingOrb, setIsDraggingOrb] = useState(false);
+  const dragStartRef = useRef<{ px: number; py: number; ox: number; oy: number } | null>(null);
+
+  const handleOrbDragStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    // Only drag from the ring/background area — not from the orb or tile buttons.
+    if ((e.target as HTMLElement).closest("button")) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    e.stopPropagation(); // prevent Tauri window drag region from taking over
+    dragStartRef.current = { px: e.clientX, py: e.clientY, ox: orbPos.x, oy: orbPos.y };
+    setIsDraggingOrb(true);
+  }, [orbPos]);
+
+  const handleOrbDragMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragStartRef.current) return;
+    const dx = e.clientX - dragStartRef.current.px;
+    const dy = e.clientY - dragStartRef.current.py;
+    const half = 210; // roughly half the orbital widget width/height
+    const nx = Math.max(half, Math.min(window.innerWidth  - half, dragStartRef.current.ox + dx));
+    const ny = Math.max(half, Math.min(window.innerHeight - half, dragStartRef.current.oy + dy));
+    setOrbPos({ x: nx, y: ny });
+  }, []);
+
+  const handleOrbDragEnd = useCallback(() => {
+    if (!dragStartRef.current) return;
+    dragStartRef.current = null;
+    setIsDraggingOrb(false);
+    try {
+      localStorage.setItem(ORB_POS_KEY, JSON.stringify(orbPos));
+    } catch {}
+  }, [orbPos]);
+
   // Status polling
   const refreshStatus = useCallback(async () => {
     try {
@@ -289,29 +340,43 @@ export default function App() {
       data-tauri-drag-region
       className="fixed inset-0 flex flex-col z-10 cursor-grab active:cursor-grabbing"
     >
-      {/* ── CONTENT AREA (everything above the input) ── */}
+      {/* ── FLOATING ORB WIDGET — absolutely positioned, draggable ── */}
+      <AnimatePresence>
+        {view === "orbital" && (
+          <motion.div
+            key="orb-widget"
+            className="fixed z-20 select-none"
+            style={{
+              left: orbPos.x,
+              top: orbPos.y,
+              x: "-50%",
+              y: "-50%",
+              cursor: isDraggingOrb ? "grabbing" : "default",
+            }}
+            initial={{ opacity: 0, scale: 0.92 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.92 }}
+            transition={{ duration: 0.28, ease: [0.2, 0.65, 0.3, 0.9] }}
+            onPointerDown={handleOrbDragStart}
+            onPointerMove={handleOrbDragMove}
+            onPointerUp={handleOrbDragEnd}
+            onPointerCancel={handleOrbDragEnd}
+          >
+            <OrbitalView
+              onNodeClick={handleNodeClick}
+              onOrbClick={handleOrbClick}
+              onOrbHoldStart={handleOrbHoldStart}
+              onOrbHoldEnd={handleOrbHoldEnd}
+              isRunning={isRunning}
+              isListening={isListening}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── CONTENT AREA — responding view only ── */}
       <div className="flex-1 min-h-0 flex items-center justify-center px-6 pt-6 pb-2 overflow-hidden">
         <AnimatePresence mode="wait">
-          {view === "orbital" && (
-            <motion.div
-              key="orbital"
-              className="flex flex-col items-center justify-center"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              transition={{ duration: 0.3, ease: [0.2, 0.65, 0.3, 0.9] }}
-            >
-              <OrbitalView
-                onNodeClick={handleNodeClick}
-                onOrbClick={handleOrbClick}
-                onOrbHoldStart={handleOrbHoldStart}
-                onOrbHoldEnd={handleOrbHoldEnd}
-                isRunning={isRunning}
-                isListening={isListening}
-              />
-            </motion.div>
-          )}
-
           {view === "responding" && (
             <motion.div
               key="responding"
