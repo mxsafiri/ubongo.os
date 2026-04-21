@@ -1,0 +1,13 @@
+{
+  "name": "ubongo-os-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Serverless API functions for the ubongo landing page (Vercel).",
+  "dependencies": {
+    "nodemailer": "^6.9.16"
+  },
+  "devDependencies": {
+    "@types/nodemailer": "^6.4.17",
+    "@vercel/node": "^3.2.29"
+  }
+}

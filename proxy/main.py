@@ -25,6 +25,8 @@ Secrets (set via `fly secrets set`):
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import time
@@ -48,6 +50,40 @@ DAILY_QUERY_LIMIT = int(os.getenv("DAILY_QUERY_LIMIT", "200"))
 # Valid invite codes — comma-separated env, or default dev set.
 _raw_codes = os.getenv("VALID_CODES", "UBONGO-ALPHA-7X2K,UBONGO-DEV-0000")
 VALID_CODES = {c.strip().upper() for c in _raw_codes.split(",") if c.strip()}
+
+# Shared HMAC secret for self-issued signed codes (from the landing-page
+# /api/request-invite Vercel function). When unset, signed codes are disabled
+# and only the static VALID_CODES list is accepted.
+INVITE_SECRET = os.getenv("INVITE_SECRET", "")
+
+# Signed-code shape: UBONGO-<8 hex>-<6 hex>, all uppercase.
+# id = 8 hex chars, sig = first 6 hex chars of HMAC-SHA256(secret, id).
+_SIGNED_CODE_ID_LEN = 8
+_SIGNED_CODE_SIG_LEN = 6
+
+
+def _is_signed_code(code: str) -> bool:
+    """True if `code` is a well-formed, validly-signed invite code."""
+    if not INVITE_SECRET:
+        return False
+    parts = code.upper().split("-")
+    if len(parts) != 3 or parts[0] != "UBONGO":
+        return False
+    id_part, sig_part = parts[1], parts[2]
+    if len(id_part) != _SIGNED_CODE_ID_LEN or len(sig_part) != _SIGNED_CODE_SIG_LEN:
+        return False
+    try:
+        # ids and sigs must be hex
+        int(id_part, 16)
+        int(sig_part, 16)
+    except ValueError:
+        return False
+    expected = (
+        hmac.new(INVITE_SECRET.encode(), id_part.encode(), hashlib.sha256)
+        .hexdigest()[:_SIGNED_CODE_SIG_LEN]
+        .upper()
+    )
+    return hmac.compare_digest(expected, sig_part)
 
 
 # ── App ───────────────────────────────────────────────────────────────────
@@ -107,8 +143,11 @@ def _extract_code(request: Request, x_api_key: Optional[str]) -> str:
 def _require_valid_code(code: str) -> None:
     if not code:
         raise HTTPException(status_code=401, detail="Missing invite code.")
-    if code not in VALID_CODES:
-        raise HTTPException(status_code=401, detail="Invalid or expired invite code.")
+    if code in VALID_CODES:
+        return
+    if _is_signed_code(code):
+        return
+    raise HTTPException(status_code=401, detail="Invalid or expired invite code.")
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────

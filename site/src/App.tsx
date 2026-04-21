@@ -213,6 +213,37 @@ export default function App() {
   const { theme, toggle } = useTheme()
   const [email, setEmail] = useState('')
   const [submitted, setSubmitted] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  const submitInvite = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (submitting) return
+    const trimmed = email.trim().toLowerCase()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      setErrorMsg('Please enter a valid email.')
+      return
+    }
+    setSubmitting(true)
+    setErrorMsg(null)
+    try {
+      const res = await fetch('/api/request-invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: trimmed }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        setErrorMsg(body?.error || 'Could not send invite. Try again.')
+      } else {
+        setSubmitted(true)
+      }
+    } catch {
+      setErrorMsg('Network error. Check your connection and try again.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   // ── Scroll-driven values ──
   const { scrollYProgress, scrollY } = useScroll()
@@ -539,20 +570,36 @@ export default function App() {
                 >
                   &#x2713;
                 </motion.span>
-                <span className="font-mono text-[11px] tracking-wider" style={{ color: 'var(--text-strong)' }}>YOU&apos;RE IN</span>
+                <span className="font-mono text-[11px] tracking-wider" style={{ color: 'var(--text-strong)' }}>CHECK YOUR INBOX</span>
               </div>
               <p className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
-                We&apos;ll email <span style={{ color: 'var(--text)' }}>{email}</span> when your spot opens.
+                Your invite code is on its way to <span style={{ color: 'var(--text)' }}>{email}</span>. May take a minute. Check spam if it doesn&apos;t arrive.
               </p>
             </motion.div>
           ) : (
-            <form
-              onSubmit={(e) => { e.preventDefault(); if (email.includes('@')) setSubmitted(true) }}
-              className="flex flex-col sm:flex-row gap-2 max-w-sm"
-            >
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" className="flex-1 px-4 py-2.5 text-[11px] tracking-wider" />
-              <button type="submit" className="btn-primary px-6 py-2.5 text-[11px] tracking-wider whitespace-nowrap">REQUEST</button>
-            </form>
+            <div className="max-w-sm">
+              <form onSubmit={submitInvite} className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => { setEmail(e.target.value); if (errorMsg) setErrorMsg(null) }}
+                  placeholder="you@example.com"
+                  className="flex-1 px-4 py-2.5 text-[11px] tracking-wider"
+                  disabled={submitting}
+                  required
+                />
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="btn-primary px-6 py-2.5 text-[11px] tracking-wider whitespace-nowrap disabled:opacity-50"
+                >
+                  {submitting ? 'SENDING…' : 'REQUEST'}
+                </button>
+              </form>
+              {errorMsg ? (
+                <p className="mt-2 text-[10px] font-mono" style={{ color: '#f87171' }}>{errorMsg}</p>
+              ) : null}
+            </div>
           )}
         </Reveal>
       </section>
