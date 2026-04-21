@@ -106,6 +106,9 @@ jobs:
       - name: Build Python sidecar (ubongo-server)
         run: |
           pyinstaller desktop/server/ubongo-server.spec --noconfirm
+          # Move the built sidecar to where Tauri expects it
+          mkdir -p desktop/src-tauri/binaries/ubongo-server
+          mv dist/ubongo-server/ubongo-server desktop/src-tauri/binaries/ubongo-server/ubongo-server
           # Verify the sidecar landed where Tauri expects it
           ls -lh desktop/src-tauri/binaries/ubongo-server/ubongo-server
 
