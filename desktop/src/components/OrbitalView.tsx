@@ -2,7 +2,11 @@
  * OrbitalView — the primary interface.
  *
  * Central ColorOrb with dock-style action tiles orbiting around it.
- * Click the orb → morphs into input. Click a tile → executes that action.
+ * Tap the orb  → focuses the always-visible ask bar.
+ * Hold the orb → starts voice push-to-talk (hold > 280 ms).
+ * Release       → submits the spoken transcript.
+ * Click a tile  → executes that action prompt.
+ *
  * The orbit rotates slowly; each tile counter-rotates so the icon stays upright.
  *
  * Visual language: macOS dock — vibrant rounded-2xl tiles, specular shine,
@@ -10,14 +14,15 @@
  * dark backdrop, not muted.
  */
 
-import React, { useState } from "react";
-import { motion } from "motion/react";
+import React, { useState, useRef } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import {
   FolderSearch,
   Rocket,
   Globe,
   Music,
   Zap,
+  Mic,
 } from "lucide-react";
 import { ColorOrb } from "@/components/ui/color-orb";
 
@@ -77,11 +82,18 @@ const ORBIT_NODES: OrbitNode[] = [
 const ORBIT_RADIUS = 140;
 const SPIN_DURATION = 40; // seconds per full rotation
 const TILE_SIZE = 52;
+const HOLD_THRESHOLD_MS = 280;
 
 interface Props {
   onNodeClick: (prompt: string) => void;
   onOrbClick: () => void;
+  /** Called when hold gesture crosses the threshold — start recording. */
+  onOrbHoldStart?: () => void;
+  /** Called when the held pointer releases — stop recording. */
+  onOrbHoldEnd?: () => void;
   isRunning: boolean;
+  /** True while the voice capture is active. */
+  isListening?: boolean;
 }
 
 /* ── Single dock-style orbiting tile ─────────────────────────────── */
@@ -168,7 +180,45 @@ function OrbitTile({
 
 /* ── Main orbital view ───────────────────────────────────────────── */
 
-export function OrbitalView({ onNodeClick, onOrbClick, isRunning }: Props) {
+export function OrbitalView({
+  onNodeClick,
+  onOrbClick,
+  onOrbHoldStart,
+  onOrbHoldEnd,
+  isRunning,
+  isListening = false,
+}: Props) {
+  // Hold-gesture state — plain refs to avoid re-renders on rapid pointer events.
+  const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wasHoldRef   = useRef(false);
+
+  const handlePointerDown = () => {
+    wasHoldRef.current = false;
+    holdTimerRef.current = setTimeout(() => {
+      wasHoldRef.current = true;
+      onOrbHoldStart?.();
+    }, HOLD_THRESHOLD_MS);
+  };
+
+  const handlePointerUp = () => {
+    if (holdTimerRef.current) {
+      clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+    if (wasHoldRef.current) {
+      onOrbHoldEnd?.();
+      // wasHoldRef stays true until onClick clears it so onClick can skip focus.
+    }
+  };
+
+  const handleClick = () => {
+    if (wasHoldRef.current) {
+      wasHoldRef.current = false; // consumed by hold — don't focus ask bar
+      return;
+    }
+    onOrbClick();
+  };
+
   return (
     <div
       className="relative flex items-center justify-center"
@@ -221,33 +271,101 @@ export function OrbitalView({ onNodeClick, onOrbClick, isRunning }: Props) {
       </motion.div>
 
       {/* Central orb — the heart */}
-      <motion.button
-        className="relative z-10 cursor-pointer"
-        onClick={onOrbClick}
-        whileHover={{ scale: 1.08 }}
-        whileTap={{ scale: 0.95 }}
-        animate={
-          isRunning
-            ? {
-                scale: [1, 1.05, 1],
-                transition: { duration: 1.5, repeat: Infinity },
-              }
-            : {}
-        }
-      >
-        <ColorOrb
-          dimension="80px"
-          spinDuration={isRunning ? 4 : 15}
-          tones={{
-            base: "oklch(12% 0.02 264)",
-            accent1: "oklch(65% 0.2 280)",
-            accent2: "oklch(72% 0.18 230)",
-            accent3: "oklch(58% 0.22 310)",
-          }}
-        />
-        {/* Glow behind orb */}
-        <div className="absolute inset-0 -z-10 rounded-full bg-indigo-500/20 blur-2xl scale-150" />
-      </motion.button>
+      <div className="relative z-10 flex flex-col items-center gap-3">
+        {/* Listening ring — expands outward when recording */}
+        <AnimatePresence>
+          {isListening && (
+            <motion.div
+              key="listen-ring"
+              className="absolute rounded-full border-2 border-rose-400/70 pointer-events-none"
+              initial={{ width: 80, height: 80, opacity: 0, scale: 0.9 }}
+              animate={{
+                width: [80, 120, 80],
+                height: [80, 120, 80],
+                opacity: [0.8, 0.3, 0.8],
+                scale: 1,
+              }}
+              exit={{ opacity: 0, scale: 0.85 }}
+              transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
+            />
+          )}
+        </AnimatePresence>
+
+        <motion.button
+          className="relative cursor-pointer select-none"
+          onClick={handleClick}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
+          onPointerLeave={handlePointerUp}  // cancel hold if pointer drifts off
+          onPointerCancel={handlePointerUp}
+          whileHover={{ scale: 1.08 }}
+          whileTap={{ scale: 0.95 }}
+          animate={
+            isListening
+              ? { scale: [1, 1.06, 1], transition: { duration: 1.2, repeat: Infinity } }
+              : isRunning
+              ? { scale: [1, 1.05, 1], transition: { duration: 1.5, repeat: Infinity } }
+              : {}
+          }
+          title="Tap to type · Hold to speak"
+        >
+          <ColorOrb
+            dimension="80px"
+            spinDuration={isListening ? 2 : isRunning ? 4 : 15}
+            tones={
+              isListening
+                ? {
+                    base: "oklch(12% 0.03 15)",
+                    accent1: "oklch(65% 0.22 15)",   // rose
+                    accent2: "oklch(70% 0.18 350)",  // pink
+                    accent3: "oklch(58% 0.24 30)",   // orange-red
+                  }
+                : {
+                    base: "oklch(12% 0.02 264)",
+                    accent1: "oklch(65% 0.2 280)",
+                    accent2: "oklch(72% 0.18 230)",
+                    accent3: "oklch(58% 0.22 310)",
+                  }
+            }
+          />
+          {/* Glow behind orb */}
+          <div
+            className={`absolute inset-0 -z-10 rounded-full blur-2xl scale-150 transition-colors duration-500 ${
+              isListening ? "bg-rose-500/25" : "bg-indigo-500/20"
+            }`}
+          />
+        </motion.button>
+
+        {/* Listening / hint label below orb */}
+        <AnimatePresence mode="wait">
+          {isListening ? (
+            <motion.div
+              key="listening"
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.2 }}
+              className="flex items-center gap-1.5"
+            >
+              <Mic className="w-3 h-3 text-rose-400" />
+              <span className="font-mono text-[10px] tracking-[0.22em] text-rose-400 uppercase">
+                Listening
+              </span>
+            </motion.div>
+          ) : (
+            <motion.div
+              key="hint"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.3 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.4 }}
+              className="font-mono text-[9px] tracking-[0.18em] text-slate-600 uppercase"
+            >
+              hold to speak
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }

@@ -5,6 +5,34 @@ All notable changes to Ubongo OS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.11] - 2026-04-21
+
+### Added — Voice push-to-talk on the orb
+
+Users can now speak intent directly instead of typing. Hold the central
+orb for ~300 ms to start recording; release to submit the transcript.
+Tap (< 300 ms) still focuses the ask bar as before.
+
+- **Hold-gesture detection** in `OrbitalView.tsx` — `onPointerDown`
+  starts a 280 ms timer; if it fires, `onOrbHoldStart` is called. On
+  `onPointerUp / onPointerLeave / onPointerCancel` the timer is cleared
+  and, if a hold was active, `onOrbHoldEnd` fires. A `wasHold` ref
+  prevents the subsequent `onClick` from also focusing the ask bar.
+- **Web Speech API** in `App.tsx` — `handleOrbHoldStart` creates a
+  `SpeechRecognition` (or `webkitSpeechRecognition`) instance with
+  `continuous = false`. On `onresult` the transcript is passed directly
+  to `handleSubmit` — same code path as typed text. On `onend` /
+  `onerror` listening state resets. If the API is unavailable (e.g.
+  offline environment) the function returns silently — no crash.
+- **Listening visual** in `OrbitalView.tsx`:
+  - Orb tones shift from indigo/violet → rose/red/pink while active.
+  - Pulsing rose ring expands outward from the orb (AnimatePresence).
+  - Mic icon + "LISTENING" monospace label replaces the "HOLD TO SPEAK"
+    hint for the duration of recording.
+  - Orb spin speed increases to 2 s/rev (normally 15 s) while listening.
+- Zero backend coupling — no new Tauri commands, no Python deps, no
+  `requirements.txt` changes. Pure frontend.
+
 ## [0.5.10] - 2026-04-21
 
 ### Added — First-launch onboarding wizard (name + tone + invite)

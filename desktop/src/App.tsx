@@ -190,6 +190,58 @@ export default function App() {
     askBarRef.current?.focus();
   }, []);
 
+  // ── Voice push-to-talk ────────────────────────────────────────────
+  // Uses the Web Speech API (available in Tauri's WebKit / WebView2).
+  // Hold the orb to start; release to stop. Transcript drops straight
+  // into handleSubmit — same path as typed text.
+
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
+  const handleOrbHoldStart = useCallback(() => {
+    const SR =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+    if (!SR) return; // silently unsupported — no crash
+
+    const recognition = new SR();
+    recognition.lang = "en-US";
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (e: any) => {
+      const transcript = (e.results[0]?.[0]?.transcript ?? "").trim();
+      if (transcript) handleSubmit(transcript);
+    };
+
+    recognition.onerror = () => {
+      setIsListening(false);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    recognitionRef.current = recognition;
+    try {
+      recognition.start();
+      setIsListening(true);
+    } catch {
+      // Already running or permission denied — ignore
+    }
+  }, [handleSubmit]);
+
+  const handleOrbHoldEnd = useCallback(() => {
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      /* ignore */
+    }
+    recognitionRef.current = null;
+    setIsListening(false);
+  }, []);
+
   // Keyboard
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -252,7 +304,10 @@ export default function App() {
               <OrbitalView
                 onNodeClick={handleNodeClick}
                 onOrbClick={handleOrbClick}
+                onOrbHoldStart={handleOrbHoldStart}
+                onOrbHoldEnd={handleOrbHoldEnd}
                 isRunning={isRunning}
+                isListening={isListening}
               />
             </motion.div>
           )}
