@@ -128,7 +128,7 @@ jobs:
       - name: Locate DMG
         id: dmg
         run: |
-          DMG=$(find desktop/src-tauri/target/release/bundle/macos -name "*.dmg" | head -1)
+          DMG=$(find desktop/src-tauri/target/release/bundle -name "*.dmg" | head -1)
           echo "path=$DMG" >> $GITHUB_OUTPUT
           echo "name=$(basename $DMG)" >> $GITHUB_OUTPUT
 
