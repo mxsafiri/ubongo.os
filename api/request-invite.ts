@@ -27,7 +27,7 @@ function generateCode(secret: string): string {
 }
 
 const DMG_URL =
-  'https://github.com/mxsafiri/ubongo.os/releases/latest/download/ubongo_0.5.11_aarch64.dmg'
+  'https://github.com/mxsafiri/ubongo.os/releases/latest/download/ubongo_0.5.12_aarch64.dmg'
 
 function plainBody(code: string): string {
   return `Welcome to Ubongo.

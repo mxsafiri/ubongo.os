@@ -1,8 +1,8 @@
 """
 Anthropic Claude provider.
 
-- Claude Haiku 3.5  → fast, cheap, default for most tasks  (~$0.001/query)
-- Claude Sonnet 3.7 → smart, powerful, routed for complex tasks (~$0.0075/query)
+- Claude Haiku 4.5  → fast, cheap, default for most tasks
+- Claude Sonnet 4.5 → smart, powerful, routed for complex tasks
 
 Supports tool_use for full agentic capability.
 Prompt caching on system prompt reduces repeat costs by ~90%.
@@ -11,9 +11,10 @@ from typing import Optional, List, Dict, Any
 from assistant_cli.utils import logger
 from .base import AIProvider, AIResponse, ToolCall
 
-# Models
-HAIKU  = "claude-3-haiku-20240307"
-SONNET = "claude-sonnet-4-20250514"
+# Models — keep these pinned to the latest non-deprecated ids.
+# Old ids (claude-3-haiku-20240307, claude-sonnet-4-20250514) now return 404.
+HAIKU  = "claude-haiku-4-5-20251001"
+SONNET = "claude-sonnet-4-5-20250929"
 
 # System prompt cached across requests to cut token costs
 _UBONGO_SYSTEM = (
@@ -143,7 +144,14 @@ class AnthropicProvider(AIProvider):
 
         except Exception as e:
             logger.error("Anthropic chat error: %s", e)
-            return AIResponse(content="", provider_name=self.name, stop_reason="error")
+            # Surface the real error so callers (and users) see what broke
+            # instead of an empty reply that looks like the UI is frozen.
+            return AIResponse(
+                content=f"[anthropic error] {e}",
+                provider_name=self.name,
+                stop_reason="error",
+                model_used="",
+            )
 
     def chat_with_tools(
         self,
@@ -195,7 +203,12 @@ class AnthropicProvider(AIProvider):
 
         except Exception as e:
             logger.error("Anthropic tool chat error: %s", e)
-            return AIResponse(content="", provider_name=self.name, stop_reason="error")
+            return AIResponse(
+                content=f"[anthropic error] {e}",
+                provider_name=self.name,
+                stop_reason="error",
+                model_used="",
+            )
 
     def send_tool_results(
         self,
@@ -261,7 +274,12 @@ class AnthropicProvider(AIProvider):
 
         except Exception as e:
             logger.error("Anthropic tool result error: %s", e)
-            return AIResponse(content="", provider_name=self.name, stop_reason="error")
+            return AIResponse(
+                content=f"[anthropic error] {e}",
+                provider_name=self.name,
+                stop_reason="error",
+                model_used="",
+            )
 
     def describe_image(
         self,
