@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     effective_tier: str = "free"
     invite_code: Optional[str] = None
     anthropic_api_key: Optional[str] = None
+    groq_api_key: Optional[str] = None
+    proxy_url: str = "https://ubongo-proxy.fly.dev"
 
     query_count: int = 0
     query_count_month: str = ""          # YYYY-MM bucket
@@ -46,6 +48,15 @@ class Settings(BaseSettings):
     def at_query_limit(self) -> bool:
         self._roll_month_if_needed()
         return self.query_count >= self.query_limit
+
+    @property
+    def is_onboarded(self) -> bool:
+        return bool(self.invite_code) or bool(self.anthropic_api_key)
+
+    @property
+    def monthly_query_count(self) -> int:
+        self._roll_month_if_needed()
+        return self.query_count
 
     # ── Persistence helpers ────────────────────────────────────────────
     def ensure_directories(self) -> None:

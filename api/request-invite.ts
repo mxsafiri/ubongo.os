@@ -27,7 +27,7 @@ function generateCode(secret: string): string {
 }
 
 const DMG_URL =
-  'https://github.com/mxsafiri/ubongo.os/releases/latest/download/ubongo_0.5.13_aarch64.dmg'
+  'https://github.com/mxsafiri/ubongo.os/releases/latest/download/ubongo_0.5.14_aarch64.dmg'
 
 function plainBody(code: string): string {
   return `Welcome to Ubongo.
@@ -66,7 +66,7 @@ function htmlBody(code: string): string {
       ${code}
     </div>
     <p style="font-size:13px;line-height:1.65;margin:0 0 10px;"><strong style="color:#fafafa;">Download</strong> (macOS Apple Silicon, ~12 MB):<br/>
-      <a href="${DMG_URL}" style="color:#6ee7b7;text-decoration:underline;">ubongo_0.5.13_aarch64.dmg</a>
+      <a href="${DMG_URL}" style="color:#6ee7b7;text-decoration:underline;">ubongo_0.5.14_aarch64.dmg</a>
     </p>
     <p style="font-size:13px;line-height:1.65;margin:18px 0 6px;"><strong style="color:#fafafa;">Install:</strong></p>
     <ol style="font-size:13px;line-height:1.8;padding-left:20px;margin:0 0 16px;">

@@ -106,11 +106,16 @@ jobs:
       - name: Build Python sidecar (ubongo-server)
         run: |
           pyinstaller desktop/server/ubongo-server.spec --noconfirm
-          # Move the built sidecar to where Tauri expects it
-          mkdir -p desktop/src-tauri/binaries/ubongo-server
-          mv dist/ubongo-server/ubongo-server desktop/src-tauri/binaries/ubongo-server/ubongo-server
-          # Verify the sidecar landed where Tauri expects it
+          # PyInstaller --onedir produces dist/ubongo-server/{ubongo-server, _internal/...}
+          # Copy the ENTIRE folder — the binary alone can't load without _internal/Python.
+          rm -rf desktop/src-tauri/binaries/ubongo-server
+          mkdir -p desktop/src-tauri/binaries
+          cp -R dist/ubongo-server desktop/src-tauri/binaries/ubongo-server
+          # Sanity: the Python runtime must be present next to the binary
+          test -f desktop/src-tauri/binaries/ubongo-server/ubongo-server
+          test -d desktop/src-tauri/binaries/ubongo-server/_internal
           ls -lh desktop/src-tauri/binaries/ubongo-server/ubongo-server
+          du -sh desktop/src-tauri/binaries/ubongo-server/_internal
 
       - name: Install frontend dependencies
         run: npm ci
