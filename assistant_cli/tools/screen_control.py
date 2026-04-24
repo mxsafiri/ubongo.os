@@ -5,10 +5,13 @@ Controls the computer like a human: moves mouse, clicks, types, takes screenshot
 Works with ANY application — not limited to apps with AppleScript support.
 """
 
+import base64
+import shutil
+import subprocess
 import time
 import platform
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 from assistant_cli.models import ExecutionResult
 from assistant_cli.utils import logger
 
@@ -184,27 +187,91 @@ class ScreenControl:
 
     # ── Screenshot ───────────────────────────────────────────────
 
-    def take_screenshot(self, filename: Optional[str] = None) -> ExecutionResult:
-        """Take a screenshot and save it."""
-        err = self._check_available()
-        if err:
-            return err
+    def take_screenshot(
+        self,
+        filename: Optional[str] = None,
+        mode: str = "full",
+        include_base64: bool = False,
+    ) -> ExecutionResult:
+        """Take a screenshot.
 
+        Uses macOS-native `screencapture` (no deps) when available, with
+        pyautogui as a cross-platform fallback.
+
+        Args:
+            filename: optional override (defaults to timestamped name).
+            mode: "full" | "window" (interactive window pick) | "selection"
+                  (interactive drag-rectangle). The latter two use native
+                  macOS affordances.
+            include_base64: if True, attach a base64-encoded PNG in the
+                  response `data["base64"]` so the caller (e.g. vision
+                  pipeline, UI card thumbnail) can display it immediately.
+        """
         try:
             self.screenshot_dir.mkdir(parents=True, exist_ok=True)
             if not filename:
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
                 filename = f"screenshot_{timestamp}.png"
-
             filepath = self.screenshot_dir / filename
-            screenshot = pyautogui.screenshot()
-            screenshot.save(str(filepath))
+
+            captured = False
+
+            # Prefer macOS native screencapture — no third-party deps,
+            # no accessibility-permission prompts, instant.
+            if self.is_macos and shutil.which("screencapture"):
+                args = ["screencapture", "-x"]  # -x = silent (no shutter)
+                if mode == "window":
+                    args.append("-W")  # interactive window pick
+                elif mode == "selection":
+                    args.append("-i")  # interactive drag selection
+                args.append(str(filepath))
+                result = subprocess.run(
+                    args,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode == 0 and filepath.exists():
+                    captured = True
+                else:
+                    logger.warning("screencapture failed: %s", result.stderr)
+
+            # Fallback to pyautogui
+            if not captured and HAS_PYAUTOGUI:
+                screenshot = pyautogui.screenshot()
+                screenshot.save(str(filepath))
+                captured = True
+
+            if not captured:
+                return ExecutionResult(
+                    success=False,
+                    message=(
+                        "Screenshot failed. On macOS ensure `screencapture` "
+                        "is available (default), otherwise install pyautogui: "
+                        "pip install pyautogui"
+                    ),
+                    error="no capture backend",
+                )
+
             self.last_screenshot = str(filepath)
+
+            data: Dict[str, Any] = {
+                "path": str(filepath),
+                "filename": filepath.name,
+                "mode": mode,
+            }
+
+            if include_base64:
+                try:
+                    with open(filepath, "rb") as f:
+                        data["base64"] = base64.b64encode(f.read()).decode("ascii")
+                except Exception as e:
+                    logger.warning("base64 encode failed: %s", e)
 
             return ExecutionResult(
                 success=True,
                 message=f"✓ Screenshot saved to {filepath.name}",
-                data={"path": str(filepath), "filename": filename},
+                data=data,
             )
         except Exception as e:
             logger.error("Screenshot failed: %s", e)

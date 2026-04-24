@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -551,6 +551,118 @@ def memory_rescan():
         count = _watcher.initial_scan(replace=True)
         return {"status": "ok", "indexed": count}
     return {"status": "error", "message": "Watcher not initialized"}
+
+
+# ── Voice transcription ─────────────────────────────────────────────────
+#
+# Hold-to-speak in the desktop UI captures audio via MediaRecorder and POSTs
+# the resulting webm/opus blob here. We forward it to either the user's own
+# Groq key (BYOK fast path) or to the ubongo proxy, which holds a server-
+# side Groq key for invite-code users. The macOS WKWebView used by Tauri does
+# not implement webkitSpeechRecognition, which is why we route through Whisper
+# instead of using the browser API.
+
+_GROQ_BASE = "https://api.groq.com/openai/v1"
+_GROQ_TRANSCRIBE_MODEL = "whisper-large-v3-turbo"
+
+
+@app.post("/transcribe")
+async def transcribe(
+    file: UploadFile = File(...),
+    language: Optional[str] = Form(default=None),
+):
+    """
+    Transcribe a short audio clip and return ``{"text": "..."}``.
+
+    Routing:
+      1. ``settings.groq_api_key`` is set → call Groq directly (no quota hit).
+      2. ``settings.invite_code`` is set → forward to the proxy /transcribe
+         (counts against the daily query quota, same as chat).
+      3. Otherwise → 503 with a clear "voice needs an invite code or a Groq
+         key" message so the UI can show a helpful toast.
+    """
+    import httpx
+
+    audio_bytes = await file.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Empty audio upload.")
+    if len(audio_bytes) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Audio clip too large (max 25 MB).")
+
+    filename = file.filename or "clip.webm"
+    content_type = file.content_type or "audio/webm"
+
+    # Path 1 — direct Groq (BYOK)
+    groq_key = (settings.groq_api_key or "").strip()
+    if groq_key:
+        files = {"file": (filename, audio_bytes, content_type)}
+        data: dict = {
+            "model": _GROQ_TRANSCRIBE_MODEL,
+            "response_format": "json",
+            "temperature": "0",
+        }
+        if language:
+            data["language"] = language
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    f"{_GROQ_BASE}/audio/transcriptions",
+                    files=files,
+                    data=data,
+                    headers={"Authorization": f"Bearer {groq_key}"},
+                )
+        except httpx.HTTPError as e:
+            raise HTTPException(status_code=502, detail=f"Groq transcription error: {e}")
+
+        if resp.status_code >= 400:
+            try:
+                err_msg = resp.json().get("error", {}).get("message") or resp.text[:300]
+            except Exception:
+                err_msg = resp.text[:300]
+            raise HTTPException(status_code=resp.status_code, detail=err_msg)
+
+        text = (resp.json().get("text") or "").strip()
+        return {"text": text}
+
+    # Path 2 — proxy with invite code
+    invite_code = (settings.invite_code or "").strip()
+    if invite_code:
+        proxy = settings.proxy_url.rstrip("/")
+        files = {"file": (filename, audio_bytes, content_type)}
+        data: dict = {}
+        if language:
+            data["language"] = language
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    f"{proxy}/transcribe",
+                    files=files,
+                    data=data,
+                    headers={"x-api-key": invite_code},
+                )
+        except httpx.HTTPError as e:
+            raise HTTPException(status_code=502, detail=f"Proxy transcription error: {e}")
+
+        if resp.status_code >= 400:
+            try:
+                err_msg = resp.json().get("detail") or resp.text[:300]
+            except Exception:
+                err_msg = resp.text[:300]
+            raise HTTPException(status_code=resp.status_code, detail=err_msg)
+
+        text = (resp.json().get("text") or "").strip()
+        return {"text": text}
+
+    # Path 3 — nothing configured
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            "Voice input needs an invite code or a Groq API key. "
+            "Add one in Settings."
+        ),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────

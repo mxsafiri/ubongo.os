@@ -1,6 +1,23 @@
 rich>=13.7.0
 typer>=0.9.0
-ollama>=0.4.0
 psutil>=5.9.0
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
+
+# AI providers
+anthropic>=0.40.0        # Claude Haiku + Sonnet (Pro / Power tiers)
+groq>=0.9.0              # Groq free tier (Llama / Mixtral)
+ollama>=0.4.0            # Local models — offline fallback
+
+# Memory layer
+lancedb>=0.15.0          # Embedded vector DB — file metadata index
+pyarrow>=15.0.0          # Required by LanceDB
+pandas>=2.0.0            # DataFrame queries on file index
+watchdog>=4.0.0          # Real-time filesystem watcher
+
+# Desktop app server
+fastapi>=0.115.0
+uvicorn>=0.30.0
+requests>=2.31.0
+python-multipart>=0.0.9   # Required by FastAPI File/Form (voice transcription)
+httpx>=0.27.0             # Async HTTP client for /transcribe forwarding

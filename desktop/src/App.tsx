@@ -242,57 +242,140 @@ export default function App() {
     askBarRef.current?.focus();
   }, []);
 
-  // ── Voice push-to-talk ────────────────────────────────────────────
-  // Uses the Web Speech API (available in Tauri's WebKit / WebView2).
-  // Hold the orb to start; release to stop. Transcript drops straight
-  // into handleSubmit — same path as typed text.
+  // ── Voice push-to-talk (MediaRecorder → Whisper) ─────────────────
+  // The macOS WKWebView Tauri ships with does NOT implement
+  // webkitSpeechRecognition, so we capture audio with MediaRecorder and
+  // POST the resulting blob to the sidecar's /transcribe endpoint, which
+  // forwards to Groq Whisper (or the user's own Groq key). The returned
+  // text drops into handleSubmit — same path as typed input.
+  //
+  // Hold the orb → request mic access → start recording.
+  // Release the orb → stop, upload, transcribe, submit.
 
   const [isListening, setIsListening] = useState(false);
-  const recognitionRef = useRef<any>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<BlobPart[]>([]);
+  const cancelTranscribeRef = useRef(false);
 
-  const handleOrbHoldStart = useCallback(() => {
-    const SR =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
-    if (!SR) return; // silently unsupported — no crash
-
-    const recognition = new SR();
-    recognition.lang = "en-US";
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-
-    recognition.onresult = (e: any) => {
-      const transcript = (e.results[0]?.[0]?.transcript ?? "").trim();
-      if (transcript) handleSubmit(transcript);
-    };
-
-    recognition.onerror = () => {
-      setIsListening(false);
-    };
-
-    recognition.onend = () => {
-      setIsListening(false);
-    };
-
-    recognitionRef.current = recognition;
-    try {
-      recognition.start();
-      setIsListening(true);
-    } catch {
-      // Already running or permission denied — ignore
+  const stopMediaTracks = useCallback(() => {
+    const stream = mediaStreamRef.current;
+    if (stream) {
+      stream.getTracks().forEach((t) => {
+        try { t.stop(); } catch { /* ignore */ }
+      });
     }
-  }, [handleSubmit]);
+    mediaStreamRef.current = null;
+  }, []);
+
+  const handleOrbHoldStart = useCallback(async () => {
+    if (mediaRecorderRef.current) return; // already recording
+
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      console.warn("voice: MediaRecorder/getUserMedia unavailable");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      audioChunksRef.current = [];
+      cancelTranscribeRef.current = false;
+
+      // Pick whichever container the WebView supports — webm/opus on
+      // Chromium/WebView2, mp4/aac on WKWebView (macOS).
+      const candidates = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/mp4",
+        "audio/ogg;codecs=opus",
+      ];
+      const mimeType =
+        candidates.find((m) =>
+          (window as any).MediaRecorder?.isTypeSupported?.(m)
+        ) ?? "";
+
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        const tracks = mediaStreamRef.current;
+        stopMediaTracks();
+        mediaRecorderRef.current = null;
+        setIsListening(false);
+
+        if (cancelTranscribeRef.current) return;
+        if (audioChunksRef.current.length === 0) {
+          // Quiet release — no audio captured. Suppress.
+          return;
+        }
+
+        const blob = new Blob(audioChunksRef.current, {
+          type: recorder.mimeType || "audio/webm",
+        });
+        // Anything under ~2 KB is essentially silence — skip.
+        if (blob.size < 2048) return;
+
+        const ext =
+          blob.type.includes("mp4") ? "m4a"
+          : blob.type.includes("ogg") ? "ogg"
+          : "webm";
+        const form = new FormData();
+        form.append("file", blob, `clip.${ext}`);
+
+        try {
+          const r = await fetch("http://127.0.0.1:8765/transcribe", {
+            method: "POST",
+            body: form,
+          });
+          if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            console.warn("voice: transcribe failed", r.status, err);
+            return;
+          }
+          const { text } = (await r.json()) as { text?: string };
+          const cleaned = (text ?? "").trim();
+          if (cleaned) handleSubmit(cleaned);
+        } catch (e) {
+          console.warn("voice: transcribe network error", e);
+        } finally {
+          audioChunksRef.current = [];
+          // Silence unused-locals lint
+          void tracks;
+        }
+      };
+
+      recorder.start();
+      setIsListening(true);
+    } catch (e) {
+      console.warn("voice: mic permission denied or unavailable", e);
+      stopMediaTracks();
+      mediaRecorderRef.current = null;
+      setIsListening(false);
+    }
+  }, [handleSubmit, stopMediaTracks]);
 
   const handleOrbHoldEnd = useCallback(() => {
-    try {
-      recognitionRef.current?.stop();
-    } catch {
-      /* ignore */
+    const recorder = mediaRecorderRef.current;
+    if (!recorder) {
+      stopMediaTracks();
+      setIsListening(false);
+      return;
     }
-    recognitionRef.current = null;
-    setIsListening(false);
-  }, []);
+    try {
+      if (recorder.state !== "inactive") recorder.stop();
+    } catch {
+      stopMediaTracks();
+      mediaRecorderRef.current = null;
+      setIsListening(false);
+    }
+  }, [stopMediaTracks]);
 
   // Keyboard
   useEffect(() => {

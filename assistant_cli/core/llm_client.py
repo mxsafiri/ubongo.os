@@ -1,28 +1,50 @@
-import ollama
+"""
+LLMClient — backward-compatible shim over the new provider layer.
+
+All new code should use ProviderRouter directly.
+This class exists so the existing conversation_engine, enhanced_parser,
+and executor continue working without modification during the transition.
+"""
 from typing import Optional, Dict, Any, List
 from assistant_cli.config import settings
 from assistant_cli.utils import logger
+from assistant_cli.providers import ProviderRouter
+from assistant_cli.providers.tool_definitions import get_tools_for_tier
+
 
 class LLMClient:
     """
-    Local LLM client using Ollama.
-    Completely offline after initial model download.
-    Zero API costs.
+    Thin shim over ProviderRouter.
+    Preserves the original interface so no other files need to change.
     """
-    
+
     def __init__(self):
-        self._client: Optional[ollama.Client] = None
-        self.model = self._select_optimal_model()
-        self.available = self._check_ollama_available()
-        logger.info("LLMClient initialized with model: %s (available: %s)", self.model, self.available)
-    
+        self._router        = ProviderRouter(settings)
+        self._ollama_client = None   # lazy, only used by legacy warmup path
+        provider            = self._router.get_provider()
+        self.model          = getattr(provider, "model", settings.ollama_model)
+        self.available      = provider.is_available()
+        logger.info(
+            "LLMClient initialised — provider: %s, available: %s",
+            provider.name, self.available
+        )
+
+    # ── Keep old internal helpers as no-ops so nothing breaks ────────
+
     def _select_optimal_model(self) -> str:
-        """Select best model based on available RAM and what's installed."""
-        # Prefer small, fast models first (especially on CPU-only)
-        # Order: fastest → most capable
+        """Deprecated — model selection now handled by ProviderRouter."""
         preferred = ["qwen2.5:0.5b", "qwen2.5:1.5b", "llama3.2:1b", "llama3.2", settings.ollama_model]
         try:
-            client = ollama.Client(host=settings.ollama_base_url)
+            from assistant_cli.providers.ollama_provider import OllamaProvider
+            op = OllamaProvider(base_url=settings.ollama_base_url)
+            return op.model
+        except Exception:
+            pass
+
+        preferred = ["qwen2.5:0.5b", "qwen2.5:1.5b", "llama3.2:1b", "llama3.2", settings.ollama_model]
+        try:
+            import ollama as _ollama
+            client = _ollama.Client(host=settings.ollama_base_url)
             resp = client.list()
             models_list = getattr(resp, "models", None) or resp.get("models", [])
             installed = []
@@ -31,7 +53,6 @@ class LLMClient:
                 if name:
                     installed.append(name)
 
-            # Pick the first preferred model that's actually installed
             for pref in preferred:
                 pref_base = pref.split(":")[0]
                 for inst in installed:
@@ -48,6 +69,7 @@ class LLMClient:
     def _check_ollama_available(self) -> bool:
         """Check if Ollama is running and model is available"""
         try:
+            import ollama
             client = ollama.Client(host=settings.ollama_base_url)
             resp = client.list()
 
@@ -76,61 +98,100 @@ class LLMClient:
             return False
     
     @property
-    def client(self) -> ollama.Client:
-        """Lazy load client"""
-        if self._client is None:
-            self._client = ollama.Client(host=settings.ollama_base_url)
-        return self._client
+    def client(self):
+        """Lazy-load Ollama client for legacy warmup path only."""
+        try:
+            import ollama as _ollama
+            if self._ollama_client is None:
+                self._ollama_client = _ollama.Client(host=settings.ollama_base_url)
+            return self._ollama_client
+        except ImportError:
+            return None
 
     def warmup(self):
         """Pre-load the model into memory so first real query is fast."""
-        if not self.available:
-            return
-        try:
-            logger.info("Warming up LLM model: %s", self.model)
-            self.client.chat(
-                model=self.model,
-                messages=[{"role": "user", "content": "say ok"}],
-                options={"num_predict": 5},
-            )
-            logger.info("LLM warm-up complete")
-        except Exception as e:
-            logger.warning("LLM warm-up failed: %s", e)
-    
+        provider = self._router.get_provider()
+        if hasattr(provider, "warmup"):
+            provider.warmup()
+
     def chat(
         self,
         message: str,
         system_prompt: Optional[str] = None,
-        context: Optional[List[Dict[str, str]]] = None
+        context: Optional[List[Dict[str, str]]] = None,
     ) -> Optional[str]:
         """
-        Send message to local LLM and get response.
-        Works completely offline.
+        Route to the best available provider and return a text response.
+        Maintains the original Optional[str] return type for compatibility.
         """
+        try:
+            provider = self._router.get_provider()
+            response = provider.chat(
+                message=message,
+                system_prompt=system_prompt,
+                history=context,
+            )
+            settings.increment_query_count()
+            return response.content if response.content else None
+        except Exception as e:
+            logger.error("LLMClient.chat error: %s", e)
+            return None
+
+    def chat_with_tools(
+        self,
+        message: str,
+        system_prompt: Optional[str] = None,
+        context: Optional[List[Dict[str, str]]] = None,
+    ):
+        """
+        Agentic chat — returns an AIResponse with possible tool_calls.
+        New code should call this for multi-step tasks.
+        """
+        from assistant_cli.providers.base import AIResponse
+        try:
+            provider = self._router.get_provider()
+            tools    = get_tools_for_tier(settings.effective_tier)
+            response = provider.chat_with_tools(
+                message=message,
+                tools=tools,
+                system_prompt=system_prompt,
+                history=context,
+            )
+            settings.increment_query_count()
+            return response
+        except Exception as e:
+            logger.error("LLMClient.chat_with_tools error: %s", e)
+            from assistant_cli.providers.base import AIResponse
+            return AIResponse(content="", stop_reason="error")
+
+    # ── Legacy internal helpers (kept for old callers) ────────────────
+
+    def _legacy_ollama_chat(
+        self,
+        message: str,
+        system_prompt: Optional[str] = None,
+        context: Optional[List[Dict[str, str]]] = None,
+    ) -> Optional[str]:
+        """Original Ollama-only implementation, kept as internal fallback."""
         if not self.available:
             logger.warning("LLM not available, falling back to pattern matching")
             return None
-        
+
         try:
-            messages = []
-            
+            messages: List[Dict] = []
             if system_prompt:
-                messages.append({
-                    "role": "system",
-                    "content": system_prompt
-                })
-            
+                messages.append({"role": "system", "content": system_prompt})
             if context:
                 messages.extend(context)
-            
-            messages.append({
-                "role": "user",
-                "content": message
-            })
-            
+            messages.append({"role": "user", "content": message})
+
             logger.debug("Sending to LLM: %s", message[:100])
-            
-            response = self.client.chat(
+
+            client = self.client
+            if client is None:
+                return None
+
+            response = client.chat(
                 model=self.model,
                 messages=messages,
                 options={

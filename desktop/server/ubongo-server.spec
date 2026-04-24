@@ -35,6 +35,8 @@ for pkg in [
     "pydantic_settings",
     "watchdog",
     "duckduckgo_search",
+    "multipart",          # python-multipart (FastAPI File/Form for /transcribe)
+    "httpx",              # async HTTP client used by /transcribe forwarding
 ]:
     try:
         d, b, h = collect_all(pkg)

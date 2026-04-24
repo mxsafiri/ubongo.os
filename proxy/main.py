@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -44,6 +44,11 @@ from pydantic import BaseModel
 
 ANTHROPIC_BASE = "https://api.anthropic.com"
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+
+# Groq is used for fast, cheap audio transcription via Whisper.
+GROQ_BASE = "https://api.groq.com/openai/v1"
+GROQ_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_TRANSCRIBE_MODEL = os.getenv("GROQ_TRANSCRIBE_MODEL", "whisper-large-v3-turbo")
 
 DAILY_QUERY_LIMIT = int(os.getenv("DAILY_QUERY_LIMIT", "200"))
 
@@ -158,6 +163,7 @@ def health():
     return {
         "status": "ok",
         "anthropic_configured": bool(ANTHROPIC_KEY),
+        "groq_configured": bool(GROQ_KEY),
         "valid_codes": len(VALID_CODES),
     }
 
@@ -262,6 +268,97 @@ def _safe_json(resp: httpx.Response):
         return resp.json()
     except Exception:
         return {"error": {"type": "proxy_parse_error", "message": resp.text[:500]}}
+
+
+# ── Transcription (Groq Whisper) ─────────────────────────────────────────
+
+
+@app.post("/transcribe")
+async def transcribe(
+    request: Request,
+    file: UploadFile = File(...),
+    language: Optional[str] = Form(default=None),
+    x_api_key: Optional[str] = Header(default=None, alias="x-api-key"),
+):
+    """
+    Transcribe a short audio clip using Groq's Whisper.
+
+    Voice input is metered against the same daily quota as chat queries —
+    each transcription bumps the same counter so we don't introduce a
+    second budget surface. Returns ``{"text": "..."}``.
+    """
+    code = _extract_code(request, x_api_key)
+    _require_valid_code(code)
+
+    ok, remaining = _bump_and_check(code)
+    if not ok:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Daily quota reached ({DAILY_QUERY_LIMIT} queries). "
+                "Resets at 00:00 UTC."
+            ),
+        )
+
+    if not GROQ_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Voice transcription is not configured on the server.",
+        )
+
+    # Read the upload into memory (audio clips are short — sub-30s).
+    audio_bytes = await file.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Empty audio upload.")
+    if len(audio_bytes) > 25 * 1024 * 1024:
+        raise HTTPException(
+            status_code=413,
+            detail="Audio clip too large (max 25 MB).",
+        )
+
+    filename = file.filename or "clip.webm"
+    content_type = file.content_type or "audio/webm"
+
+    files = {"file": (filename, audio_bytes, content_type)}
+    data: dict[str, str] = {
+        "model": GROQ_TRANSCRIBE_MODEL,
+        "response_format": "json",
+        "temperature": "0",
+    }
+    if language:
+        data["language"] = language
+
+    headers = {"Authorization": f"Bearer {GROQ_KEY}"}
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"{GROQ_BASE}/audio/transcriptions",
+                files=files,
+                data=data,
+                headers=headers,
+            )
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Upstream transcription error: {e}")
+
+    if resp.status_code >= 400:
+        try:
+            err_body = resp.json()
+            err_msg = err_body.get("error", {}).get("message") or resp.text[:300]
+        except Exception:
+            err_msg = resp.text[:300]
+        raise HTTPException(
+            status_code=resp.status_code,
+            detail=f"Groq transcription failed: {err_msg}",
+        )
+
+    payload = _safe_json(resp)
+    text = (payload.get("text") or "").strip()
+
+    response = JSONResponse({"text": text})
+    response.headers["x-ubongo-remaining-today"] = str(remaining)
+    response.headers["x-ubongo-daily-limit"] = str(DAILY_QUERY_LIMIT)
+    return response
 
 
 # ── Entry for local dev ──────────────────────────────────────────────────
