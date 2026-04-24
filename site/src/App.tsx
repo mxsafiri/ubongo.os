@@ -304,7 +304,7 @@ export default function App() {
               <span style={{ color: 'var(--accent)' }}>U</span>BONGO
             </span>
             <div className="h-3 w-px" style={{ background: 'var(--accent)', opacity: 0.3 }} />
-            <span className="text-[9px] tracking-widest" style={{ color: 'var(--accent)', opacity: 0.5 }}>v0.5.14</span>
+            <span className="text-[9px] tracking-widest" style={{ color: 'var(--accent)', opacity: 0.5 }}>v0.5.15</span>
           </div>
           <div className="flex items-center gap-4">
             <a href="#download" className="text-[10px] tracking-wider hidden sm:block hover:opacity-70 transition-opacity" style={{ color: 'var(--text-muted)' }}>DOWNLOAD</a>
@@ -494,8 +494,8 @@ export default function App() {
                 <span className="text-[10px] tracking-widest" style={{ color: 'var(--text-muted)' }}>macOS</span>
               </div>
               <div className="text-[10px] font-mono mb-1" style={{ color: 'var(--text-faint)' }}>Apple Silicon (M1+)</div>
-              <div className="text-[9px] font-mono mb-4" style={{ color: 'var(--text-faint)' }}>v0.5.14 &middot; ~145 MB</div>
-              <a href="https://github.com/mxsafiri/ubongo.os/releases/latest/download/ubongo_0.5.14_aarch64.dmg" className="btn-primary w-full px-4 py-2.5 text-[11px] tracking-wider">
+              <div className="text-[9px] font-mono mb-4" style={{ color: 'var(--text-faint)' }}>v0.5.15 &middot; ~145 MB</div>
+              <a href="https://github.com/mxsafiri/ubongo.os/releases/latest/download/ubongo_0.5.15_aarch64.dmg" className="btn-primary w-full px-4 py-2.5 text-[11px] tracking-wider">
                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14m7-7l-7 7-7-7" /></svg>
                 DOWNLOAD .DMG
               </a>

@@ -44,7 +44,13 @@ from assistant_cli.core import (
     load_workspace,
     run_turn,
 )
-from assistant_cli.core.agent_loop import AgentTurn as _AgentTurn  # noqa: F401
+from assistant_cli.core.agent_loop import (
+    AgentTurn as _AgentTurn,  # noqa: F401
+    _tool_memory_save,
+    _tool_memory_recall,
+    _tool_memory_forget,
+    _tool_learning_suggest,
+)
 from gateway import EventBus, Gateway
 
 logger = logging.getLogger("ubongo.server")
@@ -60,12 +66,14 @@ app.add_middleware(
 )
 
 # Singletons
-_router:   Optional[ProviderRouter]  = None
-_executor: Optional[CommandExecutor] = None
-_memory:   Optional[MemoryStore]     = None
-_watcher:  Optional[FileWatcher]     = None
-_context:  Optional[ContextBuilder]  = None
-_gateway:  Optional[Gateway]         = None
+_router:    Optional[ProviderRouter]  = None
+_executor:  Optional[CommandExecutor] = None
+_memory:    Optional[MemoryStore]     = None
+_watcher:   Optional[FileWatcher]     = None
+_context:   Optional[ContextBuilder]  = None
+_gateway:   Optional[Gateway]         = None
+_workspace = None                       # core.Workspace
+_semantic_memory: Optional[SemanticMemory] = None
 
 
 def get_router() -> ProviderRouter:
@@ -94,6 +102,22 @@ def get_context() -> ContextBuilder:
     if _context is None:
         _context = ContextBuilder(get_memory())
     return _context
+
+
+def get_workspace():
+    """Lazy-load the user's ~/.ubongo workspace (SOUL.md, MEMORY.md, EVOLUTION.md, etc.)."""
+    global _workspace
+    if _workspace is None:
+        _workspace = load_workspace()
+    return _workspace
+
+
+def get_semantic_memory() -> SemanticMemory:
+    """The agent's persistent fact store — episodic memory the agent reads/writes."""
+    global _semantic_memory
+    if _semantic_memory is None:
+        _semantic_memory = SemanticMemory(get_workspace().episodic_dir)
+    return _semantic_memory
 
 
 # ── Request / Response models ─────────────────────────────────────────────
@@ -736,6 +760,18 @@ def _build_system_prompt(memory_context: str) -> str:
     )
 
 
+def _wrap_dict_as_execution(result: dict, *, default_msg: str, success: Optional[bool] = None):
+    """Adapt agent_loop's dict-returning tool helpers to ExecutionResult."""
+    from assistant_cli.models import ExecutionResult
+    if not isinstance(result, dict):
+        return ExecutionResult(success=False, message=str(result), data=None, error="bad_tool_result")
+    err = result.get("error")
+    if err:
+        return ExecutionResult(success=False, message=str(err), data=result, error=str(err))
+    ok = success if success is not None else True
+    return ExecutionResult(success=ok, message=default_msg, data=result, error=None)
+
+
 def _execute_tool(executor: CommandExecutor, tool_name: str, tool_input: dict):
     """Map a Claude tool_use call onto the existing executor or memory store."""
     from assistant_cli.models import ExecutionResult
@@ -883,6 +919,44 @@ def _execute_tool(executor: CommandExecutor, tool_name: str, tool_input: dict):
                 return executor.automation.create_presentation(title=name)
             else:
                 return executor.automation.create_document(title=name, content=content)
+
+        # ── Persistent memory & learning (the agent's "growth" surface) ──
+        elif tool_name == "memory_save":
+            result = _tool_memory_save(tool_input, get_semantic_memory())
+            return _wrap_dict_as_execution(result, default_msg="Saved to memory.")
+
+        elif tool_name == "memory_recall":
+            result = _tool_memory_recall(tool_input, get_semantic_memory())
+            facts = result.get("results", []) if isinstance(result, dict) else []
+            if not facts:
+                msg = f"No matching facts (searched {result.get('total_facts', 0)} total)."
+            else:
+                lines = [f"Recalled {len(facts)} fact(s):"]
+                for f in facts[:10]:
+                    txt = (f.get("text") or "").strip().replace("\n", " ")
+                    lines.append(f"  • [{f.get('id')}] {txt[:160]}")
+                msg = "\n".join(lines)
+            return _wrap_dict_as_execution(result, default_msg=msg)
+
+        elif tool_name == "memory_forget":
+            result = _tool_memory_forget(tool_input, get_semantic_memory())
+            ok = bool(result.get("forgotten"))
+            msg = f"Forgot fact #{result.get('id')}." if ok else f"No fact with id={result.get('id')}."
+            return _wrap_dict_as_execution(result, default_msg=msg, success=ok)
+
+        elif tool_name == "learning_suggest":
+            # Agent proposes a durable update to SOUL.md / USER.md / TOOLS.md / MEMORY.md.
+            # We pass canvas=None / session=None — the suggestion still appends to
+            # EVOLUTION.md, the user reviews it manually. (Live canvas wiring is gateway-only.)
+            result = _tool_learning_suggest(
+                tool_input,
+                ws=get_workspace(),
+                canvas=None,
+                session=None,
+            )
+            target = (tool_input.get("target") or "").strip() or "EVOLUTION.md"
+            msg = f"Logged learning suggestion → {target} (review in EVOLUTION.md)."
+            return _wrap_dict_as_execution(result, default_msg=msg)
 
         return ExecutionResult(success=False, message=f"Unknown tool: {tool_name}", data=None, error="unknown_tool")
 
