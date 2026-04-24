@@ -9,6 +9,8 @@ import Plan, { type Task } from "@/components/ui/agent-plan";
 import { ActionBar } from "@/components/ActionBar";
 import { ResponseRenderer } from "@/components/ResponseRenderer";
 import { Onboarding, loadProfile, type OnboardingProfile } from "@/components/Onboarding";
+import { UpgradeBanner } from "@/components/ui/upgrade-banner";
+import { useUpdateCheck } from "@/lib/useUpdateCheck";
 
 /**
  * App states:
@@ -35,6 +37,13 @@ export default function App() {
   // `null` while checking, `true` once validated, `false` → show Onboarding
   const [onboarded, setOnboarded] = useState<boolean | null>(null);
   const [profile, setProfile] = useState<OnboardingProfile | null>(() => loadProfile());
+
+  // ── Update notifications ─────────────────────────────────────────
+  // Polls GitHub releases on mount and every 4h. When a newer tag than
+  // the running build is published, the banner appears at the top of
+  // the window. Click → opens the DMG download. The user can dismiss
+  // a release once and never get nagged about it again.
+  const update = useUpdateCheck();
 
   useEffect(() => {
     invoke<{ onboarded: boolean }>("onboarding_status")
@@ -427,6 +436,28 @@ export default function App() {
       data-tauri-drag-region
       className="fixed inset-0 z-10"
     >
+      {/* ── Update banner ─────────────────────────────────────────────
+          Floats at the top, visible above everything else. Only renders
+          when a newer release tag is detected. Click opens the DMG.
+      ─────────────────────────────────────────────────────────────── */}
+      {update.updateAvailable && update.info && (
+        <div
+          className="fixed left-1/2 top-3 z-40 -translate-x-1/2"
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <UpgradeBanner
+            buttonText={`Update to v${update.info.latest}`}
+            description="— new features and fixes ready"
+            onClick={() => {
+              invoke("open_url", { url: update.info!.downloadUrl }).catch(
+                () => window.open(update.info!.downloadUrl, "_blank")
+              );
+            }}
+            onClose={update.dismiss}
+          />
+        </div>
+      )}
+
       {/* ── SINGLE FLOATING WIDGET ────────────────────────────────────
           Orb · response card · ask bar all travel together.
           Drag from the ring area (non-button, non-input) to reposition.
