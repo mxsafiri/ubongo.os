@@ -308,6 +308,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-4">
             <a href="#download" className="text-[10px] tracking-wider hidden sm:block hover:opacity-70 transition-opacity" style={{ color: 'var(--text-muted)' }}>DOWNLOAD</a>
+            <a href="/surfari" className="text-[10px] tracking-wider hidden sm:block hover:opacity-70 transition-opacity" style={{ color: '#00C2FF' }}>SURFARI ↗</a>
             <button onClick={toggle} className="theme-toggle" aria-label="Toggle theme">
               <AnimatePresence mode="wait" initial={false}>
                 <motion.div
@@ -444,6 +445,10 @@ export default function App() {
             >
               <a href="#download" className="btn-primary px-6 py-2.5 text-xs tracking-wider text-center">DOWNLOAD</a>
               <a href="#access" className="btn-ghost px-6 py-2.5 text-xs tracking-wider text-center">GET EARLY ACCESS</a>
+              <a href="/surfari" className="btn-surfari px-6 py-2.5 text-xs tracking-wider text-center">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 12c0 0 3-7 9-7s9 7 9 7-3 7-9 7-9-7-9-7z"/><circle cx="12" cy="12" r="3"/></svg>
+                PLAY SURFARI
+              </a>
             </motion.div>
           </div>
         </motion.div>
