@@ -1,0 +1,17 @@
+{
+  "name": "Surfari",
+  "short_name": "Surfari",
+  "description": "Own the city. Ride every zone.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#060810",
+  "theme_color": "#060810",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "any",
+      "type": "image/x-icon"
+    }
+  ]
+}

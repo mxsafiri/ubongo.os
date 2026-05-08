@@ -1,0 +1,30 @@
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=DM+Mono:wght@400;500&display=swap');
+
+:root {
+  /* Color palette */
+  --color-void: #060810;
+  --color-ocean: #0A0F1E;
+  --color-depth: #111827;
+  --color-tide: #00C2FF;
+  --color-amber: #FF7A35;
+  --color-coral: #FF4757;
+  --color-verde: #00E096;
+  --color-gold: #FFB800;
+  --color-violet: #7C5CFC;
+
+  /* Text */
+  --text-primary: #F0F4FF;
+  --text-secondary: #8899BB;
+  --text-muted: #4A5A7A;
+
+  /* Fonts */
+  --font-display: 'Syne', sans-serif;
+  --font-body: 'DM Sans', sans-serif;
+  --font-mono: 'DM Mono', monospace;
+
+  /* Spacing */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+}
