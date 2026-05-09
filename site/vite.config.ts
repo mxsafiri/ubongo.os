@@ -10,4 +10,17 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  server: {
+    port: 1420,
+    proxy: {
+      '/surfari': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
+      '/_next': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
+    },
+  },
 })
