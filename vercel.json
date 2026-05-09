@@ -1,9 +1,6 @@
 {
+  "framework": null,
   "buildCommand": "cd surfari && npm install && npm run build",
   "outputDirectory": "surfari/.next",
-  "installCommand": "cd surfari && npm install",
-  "framework": "nextjs",
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/$1" }
-  ]
+  "installCommand": "cd surfari && npm install"
 }
