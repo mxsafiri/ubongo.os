@@ -5,7 +5,7 @@ import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { useGameStore } from '@/store/game';
 import { DAR_ZONES, ZONE_TIER_COLORS, ZONE_STATE_COLORS } from '@/lib/game/zones';
-import { SURFARI_MAP_STYLE, MAP_CONFIG } from '@/lib/map/style';
+import { MAP_CONFIG } from '@/lib/map/style';
 
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!;
 
@@ -49,6 +49,95 @@ function buildAmbientPlayers(): GeoJSON.FeatureCollection {
   };
 }
 
+function addZoneLayers(map: mapboxgl.Map) {
+  map.addSource('zones', { type: 'geojson', data: buildZonesGeoJSON(DAR_ZONES) });
+  map.addSource('ambient-players', { type: 'geojson', data: buildAmbientPlayers() });
+  map.addSource('real-players', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [] },
+  });
+
+  // Zone pulse ring
+  map.addLayer({
+    id: 'zones-pulse',
+    type: 'circle',
+    source: 'zones',
+    paint: {
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 14, 16, 32],
+      'circle-color': ['get', 'tierColor'],
+      'circle-opacity': 0.15,
+      'circle-blur': 1.2,
+      'circle-stroke-width': 1.5,
+      'circle-stroke-color': ['get', 'stateColor'],
+      'circle-stroke-opacity': 0.5,
+    },
+  });
+
+  // Zone core dot
+  map.addLayer({
+    id: 'zones-core',
+    type: 'circle',
+    source: 'zones',
+    paint: {
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 5, 16, 11],
+      'circle-color': ['get', 'tierColor'],
+      'circle-opacity': 0.95,
+      'circle-stroke-width': 2,
+      'circle-stroke-color': ['get', 'stateColor'],
+      'circle-stroke-opacity': 1,
+    },
+  });
+
+  // Zone label
+  map.addLayer({
+    id: 'zones-label',
+    type: 'symbol',
+    source: 'zones',
+    minzoom: 13,
+    layout: {
+      'text-field': ['get', 'name'],
+      'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
+      'text-size': 11,
+      'text-offset': [0, 1.8],
+      'text-anchor': 'top',
+    },
+    paint: {
+      'text-color': '#F0F4FF',
+      'text-halo-color': '#060810',
+      'text-halo-width': 1.5,
+      'text-opacity': 0.9,
+    },
+  });
+
+  // Ambient player traces
+  map.addLayer({
+    id: 'ambient-players',
+    type: 'circle',
+    source: 'ambient-players',
+    paint: {
+      'circle-radius': 3,
+      'circle-color': ['get', 'color'],
+      'circle-opacity': 0.45,
+      'circle-blur': 0.5,
+    },
+  });
+
+  // Real players
+  map.addLayer({
+    id: 'real-players',
+    type: 'circle',
+    source: 'real-players',
+    paint: {
+      'circle-radius': 6,
+      'circle-color': ['get', 'color'],
+      'circle-opacity': 0.9,
+      'circle-stroke-width': 2,
+      'circle-stroke-color': '#F0F4FF',
+      'circle-stroke-opacity': 0.8,
+    },
+  });
+}
+
 export default function CityMap() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
@@ -59,8 +148,7 @@ export default function CityMap() {
 
     const map = new mapboxgl.Map({
       container: mapContainer.current,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      style: SURFARI_MAP_STYLE as any,
+      style: 'mapbox://styles/mapbox/dark-v11',
       center: [mapView.longitude, mapView.latitude],
       zoom: mapView.zoom,
       pitch: mapView.pitch,
@@ -74,96 +162,20 @@ export default function CityMap() {
     mapRef.current = map;
 
     map.on('load', () => {
-      const zonesGeoJSON = buildZonesGeoJSON(DAR_ZONES);
+      // Darken the base map to match Surfari palette
+      if (map.getLayer('background')) {
+        map.setPaintProperty('background', 'background-color', '#060810');
+      }
+      if (map.getLayer('water')) {
+        map.setPaintProperty('water', 'fill-color', '#0A1628');
+      }
+      if (map.getLayer('land')) {
+        map.setPaintProperty('land', 'background-color', '#0D1520');
+      }
 
-      map.addSource('zones', { type: 'geojson', data: zonesGeoJSON });
-      map.addSource('ambient-players', { type: 'geojson', data: buildAmbientPlayers() });
-      map.addSource('real-players', {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: [] },
-      });
+      addZoneLayers(map);
 
-      // Zone pulse ring
-      map.addLayer({
-        id: 'zones-pulse',
-        type: 'circle',
-        source: 'zones',
-        paint: {
-          'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 12, 16, 28],
-          'circle-color': ['get', 'tierColor'],
-          'circle-opacity': 0.12,
-          'circle-blur': 1.2,
-          'circle-stroke-width': 1.5,
-          'circle-stroke-color': ['get', 'stateColor'],
-          'circle-stroke-opacity': 0.6,
-        },
-      });
-
-      // Zone core dot
-      map.addLayer({
-        id: 'zones-core',
-        type: 'circle',
-        source: 'zones',
-        paint: {
-          'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 5, 16, 10],
-          'circle-color': ['get', 'tierColor'],
-          'circle-opacity': 0.95,
-          'circle-stroke-width': 2,
-          'circle-stroke-color': ['get', 'stateColor'],
-          'circle-stroke-opacity': 1,
-        },
-      });
-
-      // Zone label
-      map.addLayer({
-        id: 'zones-label',
-        type: 'symbol',
-        source: 'zones',
-        minzoom: 13,
-        layout: {
-          'text-field': ['get', 'name'],
-          'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
-          'text-size': 11,
-          'text-offset': [0, 1.8],
-          'text-anchor': 'top',
-        },
-        paint: {
-          'text-color': '#F0F4FF',
-          'text-halo-color': '#060810',
-          'text-halo-width': 1.5,
-          'text-opacity': 0.9,
-        },
-      });
-
-      // Ambient player traces
-      map.addLayer({
-        id: 'ambient-players',
-        type: 'circle',
-        source: 'ambient-players',
-        paint: {
-          'circle-radius': 3,
-          'circle-color': ['get', 'color'],
-          'circle-opacity': 0.5,
-          'circle-blur': 0.5,
-        },
-      });
-
-      // Real players
-      map.addLayer({
-        id: 'real-players',
-        type: 'circle',
-        source: 'real-players',
-        paint: {
-          'circle-radius': 6,
-          'circle-color': ['get', 'color'],
-          'circle-opacity': 0.9,
-          'circle-stroke-width': 2,
-          'circle-stroke-color': '#F0F4FF',
-          'circle-stroke-opacity': 0.8,
-        },
-      });
-
-      // Zone click handler
+      // Zone click
       map.on('click', 'zones-core', (e) => {
         if (!e.features?.[0]) return;
         const zoneId = e.features[0].properties?.id as string;
@@ -171,15 +183,14 @@ export default function CityMap() {
         if (zone) selectZone(zone);
       });
 
-      map.on('mouseenter', 'zones-core', () => {
-        map.getCanvas().style.cursor = 'pointer';
-      });
-      map.on('mouseleave', 'zones-core', () => {
-        map.getCanvas().style.cursor = '';
-      });
+      map.on('mouseenter', 'zones-core', () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'zones-core', () => { map.getCanvas().style.cursor = ''; });
 
       setMapLoaded(true);
     });
+
+    // Fallback — mark loaded even on style error so the UI isn't stuck
+    map.on('error', () => setMapLoaded(true));
 
     map.on('moveend', () => {
       const center = map.getCenter();

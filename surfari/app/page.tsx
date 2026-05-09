@@ -14,12 +14,20 @@ export default function HomePage() {
   const mapLoaded = useGameStore(selectMapLoaded);
   const setPhase = useGameStore((s) => s.setPhase);
 
+  // Advance when map loads
   useEffect(() => {
     if (mapLoaded && phase === 'loading') {
       const t = setTimeout(() => setPhase('onboarding'), 800);
       return () => clearTimeout(t);
     }
   }, [mapLoaded, phase, setPhase]);
+
+  // Hard fallback — never stay stuck on loading for more than 5s
+  useEffect(() => {
+    if (phase !== 'loading') return;
+    const t = setTimeout(() => setPhase('onboarding'), 5000);
+    return () => clearTimeout(t);
+  }, [phase, setPhase]);
 
   const showHUD = phase === 'exploring' || phase === 'surfing' || phase === 'challenge' || phase === 'result';
 
