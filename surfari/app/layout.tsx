@@ -3,18 +3,14 @@ import '../styles/tokens.css';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Surfari',
-  description: 'Own the city. Ride every zone.',
+  title: { default: 'UBONGO', template: '%s | UBONGO' },
+  description: 'Speak with your computer and watch it come to life.',
   manifest: '/manifest.json',
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: 'black-translucent',
-    title: 'Surfari',
-  },
+  appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'UBONGO' },
 };
 
 export const viewport: Viewport = {
-  themeColor: '#060810',
+  themeColor: '#050505',
   width: 'device-width',
   initialScale: 1,
   maximumScale: 1,
@@ -22,23 +18,10 @@ export const viewport: Viewport = {
   viewportFit: 'cover',
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="h-full">
-      <body
-        className="h-full overflow-hidden"
-        style={{
-          background: '#060810',
-          fontFamily: 'var(--font-body)',
-          color: 'var(--text-primary)',
-        }}
-      >
-        {children}
-      </body>
+      <body className="h-full">{children}</body>
     </html>
   );
 }
