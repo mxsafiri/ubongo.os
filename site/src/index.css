@@ -481,6 +481,25 @@ input[type="email"]::placeholder {
   box-shadow: 0 0 16px rgba(129, 140, 248, 0.15);
 }
 
+.btn-surfari {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px solid #00C2FF;
+  color: #00C2FF;
+  background: transparent;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  transition: all 0.25s;
+  text-decoration: none;
+}
+.btn-surfari:hover {
+  background: #00C2FF;
+  color: #060810;
+  box-shadow: 0 0 20px rgba(0, 194, 255, 0.22);
+}
+
 /* ═══════════════════════════════════════════
    THEME TOGGLE
    ═══════════════════════════════════════════ */

@@ -14,6 +14,7 @@ lib/
 lib64/
 !site/src/lib/
 !desktop/src/lib/
+!surfari/lib/
 parts/
 sdist/
 var/
