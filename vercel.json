@@ -1,6 +1,0 @@
-{
-  "framework": null,
-  "buildCommand": "cd surfari && npm install && npm run build",
-  "outputDirectory": "surfari/.next",
-  "installCommand": "cd surfari && npm install"
-}
