@@ -57,19 +57,32 @@ function addZoneLayers(map: mapboxgl.Map) {
     data: { type: 'FeatureCollection', features: [] },
   });
 
+  // Outer glow halo
+  map.addLayer({
+    id: 'zones-halo',
+    type: 'circle',
+    source: 'zones',
+    paint: {
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 20, 15, 52],
+      'circle-color': ['get', 'tierColor'],
+      'circle-opacity': 0.07,
+      'circle-blur': 1.6,
+    },
+  });
+
   // Zone pulse ring
   map.addLayer({
     id: 'zones-pulse',
     type: 'circle',
     source: 'zones',
     paint: {
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 14, 16, 32],
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 10, 15, 26],
       'circle-color': ['get', 'tierColor'],
-      'circle-opacity': 0.15,
-      'circle-blur': 1.2,
+      'circle-opacity': 0.18,
+      'circle-blur': 0.8,
       'circle-stroke-width': 1.5,
-      'circle-stroke-color': ['get', 'stateColor'],
-      'circle-stroke-opacity': 0.5,
+      'circle-stroke-color': ['get', 'tierColor'],
+      'circle-stroke-opacity': 0.4,
     },
   });
 
@@ -79,12 +92,24 @@ function addZoneLayers(map: mapboxgl.Map) {
     type: 'circle',
     source: 'zones',
     paint: {
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 5, 16, 11],
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 5, 15, 10],
       'circle-color': ['get', 'tierColor'],
-      'circle-opacity': 0.95,
-      'circle-stroke-width': 2,
-      'circle-stroke-color': ['get', 'stateColor'],
-      'circle-stroke-opacity': 1,
+      'circle-opacity': 1,
+      'circle-stroke-width': 2.5,
+      'circle-stroke-color': '#0A0E1A',
+      'circle-stroke-opacity': 0.9,
+    },
+  });
+
+  // Inner bright core
+  map.addLayer({
+    id: 'zones-inner',
+    type: 'circle',
+    source: 'zones',
+    paint: {
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 2, 15, 4],
+      'circle-color': '#ffffff',
+      'circle-opacity': 0.75,
     },
   });
 
@@ -102,9 +127,9 @@ function addZoneLayers(map: mapboxgl.Map) {
       'text-anchor': 'top',
     },
     paint: {
-      'text-color': '#F0F4FF',
-      'text-halo-color': '#060810',
-      'text-halo-width': 1.5,
+      'text-color': '#F0F6FF',
+      'text-halo-color': '#0A0E1A',
+      'text-halo-width': 2,
       'text-opacity': 0.9,
     },
   });
@@ -115,10 +140,10 @@ function addZoneLayers(map: mapboxgl.Map) {
     type: 'circle',
     source: 'ambient-players',
     paint: {
-      'circle-radius': 3,
+      'circle-radius': 3.5,
       'circle-color': ['get', 'color'],
-      'circle-opacity': 0.45,
-      'circle-blur': 0.5,
+      'circle-opacity': 0.5,
+      'circle-blur': 0.6,
     },
   });
 
@@ -162,15 +187,14 @@ export default function CityMap() {
     mapRef.current = map;
 
     map.on('load', () => {
-      // Darken the base map to match Surfari palette
       if (map.getLayer('background')) {
-        map.setPaintProperty('background', 'background-color', '#060810');
+        map.setPaintProperty('background', 'background-color', '#0A0E1A');
       }
       if (map.getLayer('water')) {
-        map.setPaintProperty('water', 'fill-color', '#0A1628');
+        map.setPaintProperty('water', 'fill-color', '#0D1E35');
       }
       if (map.getLayer('land')) {
-        map.setPaintProperty('land', 'background-color', '#0D1520');
+        map.setPaintProperty('land', 'background-color', '#0F1825');
       }
 
       addZoneLayers(map);
