@@ -187,15 +187,30 @@ export default function CityMap() {
     mapRef.current = map;
 
     map.on('load', () => {
-      if (map.getLayer('background')) {
-        map.setPaintProperty('background', 'background-color', '#0A0E1A');
-      }
-      if (map.getLayer('water')) {
-        map.setPaintProperty('water', 'fill-color', '#0D1E35');
-      }
-      if (map.getLayer('land')) {
-        map.setPaintProperty('land', 'background-color', '#0F1825');
-      }
+      // Remap every land-related layer to the dark game palette
+      const setFill = (id: string, color: string) => {
+        if (map.getLayer(id)) map.setPaintProperty(id, 'fill-color', color);
+      };
+      const setLine = (id: string, color: string) => {
+        if (map.getLayer(id)) map.setPaintProperty(id, 'line-color', color);
+      };
+      const setBg = (id: string, color: string) => {
+        if (map.getLayer(id)) map.setPaintProperty(id, 'background-color', color);
+      };
+
+      setBg('background', '#0A0E1A');
+      setBg('land', '#0D1320');
+      setFill('landcover', '#0D1320');
+      setFill('landcover-crop', '#0D1320');
+      setFill('landcover-grass', '#0D1320');
+      setFill('landcover-wood', '#0F1825');
+      setFill('national-park', '#0D1825');
+      setFill('landuse', '#0F1622');
+      setFill('landuse-residential', '#0F1622');
+      setFill('water', '#071525');
+      setFill('water-shadow', '#071525');
+      setLine('waterway', '#0A1D30');
+      setLine('waterway-shadow', '#0A1D30');
 
       addZoneLayers(map);
 
