@@ -5,7 +5,6 @@ import { useEffect } from 'react';
 import { useGameStore, selectPhase, selectMapLoaded } from '@/store/game';
 import Onboarding from '@/components/game/Onboarding';
 import HUD from '@/components/layout/HUD';
-import ZonePanel from '@/components/game/ZonePanel';
 
 const CityMap = dynamic(() => import('@/components/map/CityMap'), { ssr: false });
 
@@ -66,9 +65,6 @@ export default function SurfariPage() {
 
       {/* HUD */}
       {showHUD && <HUD />}
-
-      {/* Zone panel */}
-      {showHUD && <ZonePanel />}
     </div>
   );
 }

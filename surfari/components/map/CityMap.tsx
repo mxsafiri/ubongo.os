@@ -1,11 +1,13 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { AnimatePresence } from 'framer-motion';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { useGameStore } from '@/store/game';
 import { DAR_ZONES, ZONE_TIER_COLORS, ZONE_STATE_COLORS } from '@/lib/game/zones';
 import { MAP_CONFIG } from '@/lib/map/style';
+import { ZonePopup } from '@/components/game/ZonePopup';
 
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!;
 
@@ -167,6 +169,8 @@ export default function CityMap() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const { mapView, nearby_players, setMapLoaded, setMapView, selectZone } = useGameStore();
+  const selected_zone = useGameStore((s) => s.selected_zone);
+  const [popupPos, setPopupPos] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     if (mapRef.current || !mapContainer.current) return;
@@ -249,6 +253,38 @@ export default function CityMap() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Track selected zone screen position and fly camera to it
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+
+    if (!selected_zone) {
+      setPopupPos(null);
+      return;
+    }
+
+    map.flyTo({
+      center: [selected_zone.lng, selected_zone.lat],
+      zoom: Math.max(map.getZoom(), 14),
+      duration: 600,
+      essential: true,
+    });
+
+    const updatePos = () => {
+      const pt = map.project([selected_zone.lng, selected_zone.lat]);
+      setPopupPos({ x: Math.round(pt.x), y: Math.round(pt.y) });
+    };
+
+    updatePos();
+    map.on('move', updatePos);
+    map.on('zoom', updatePos);
+    return () => {
+      map.off('move', updatePos);
+      map.off('zoom', updatePos);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected_zone]);
+
   // Update real-players source when nearby_players changes
   useEffect(() => {
     const map = mapRef.current;
@@ -269,10 +305,20 @@ export default function CityMap() {
   }, [nearby_players]);
 
   return (
-    <div
-      ref={mapContainer}
-      className="absolute inset-0 w-full h-full"
-      style={{ background: '#060810' }}
-    />
+    <div className="absolute inset-0" style={{ background: '#060810' }}>
+      <div ref={mapContainer} className="absolute inset-0 w-full h-full" />
+      <AnimatePresence>
+        {selected_zone && popupPos && (
+          <ZonePopup
+            key={selected_zone.id}
+            zone={selected_zone}
+            x={popupPos.x}
+            y={popupPos.y}
+            onClose={() => selectZone(null)}
+            onSurf={() => selectZone(null)}
+          />
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
