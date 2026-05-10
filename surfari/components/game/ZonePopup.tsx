@@ -32,7 +32,7 @@ export function ZonePopup({ zone, x, y, onClose, onSurf }: ZonePopupProps) {
   return (
     <motion.div
       key={zone.id}
-      className="absolute z-30 pointer-events-none"
+      className="absolute z-[20] pointer-events-none"
       style={{ left: x, top: y }}
       initial={false}
     >

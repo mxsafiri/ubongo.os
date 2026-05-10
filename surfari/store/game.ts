@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import type {
   GamePhase,
+  GameTab,
   PlayerCard,
   Zone,
   Challenge,
@@ -13,6 +14,7 @@ import { DEFAULT_VIEW } from '@/lib/map/style';
 interface GameStore {
   // State
   phase: GamePhase;
+  activeTab: GameTab;
   player: PlayerCard | null;
   nearby_players: PlayerCard[];
   nearby_zones: Zone[];
@@ -24,6 +26,7 @@ interface GameStore {
 
   // Actions
   setPhase: (phase: GamePhase) => void;
+  setActiveTab: (tab: GameTab) => void;
   setPlayer: (player: PlayerCard) => void;
   updateTokens: (amount: number) => void;
   setMapView: (view: Partial<MapViewState>) => void;
@@ -44,6 +47,7 @@ interface GameStore {
 export const useGameStore = create<GameStore>()(
   subscribeWithSelector((set, get) => ({
     phase: 'loading',
+    activeTab: 'map',
     player: null,
     nearby_players: [],
     nearby_zones: [],
@@ -54,6 +58,8 @@ export const useGameStore = create<GameStore>()(
     mapLoaded: false,
 
     setPhase: (phase) => set({ phase }),
+
+    setActiveTab: (activeTab) => set({ activeTab }),
 
     setPlayer: (player) => set({ player }),
 
@@ -135,6 +141,7 @@ export const useGameStore = create<GameStore>()(
 
 // Selectors
 export const selectPhase = (s: GameStore) => s.phase;
+export const selectActiveTab = (s: GameStore) => s.activeTab;
 export const selectPlayer = (s: GameStore) => s.player;
 export const selectNearbyZones = (s: GameStore) => s.nearby_zones;
 export const selectSelectedZone = (s: GameStore) => s.selected_zone;

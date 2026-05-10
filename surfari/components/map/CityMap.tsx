@@ -8,6 +8,7 @@ import { useGameStore } from '@/store/game';
 import { DAR_ZONES, ZONE_TIER_COLORS, ZONE_STATE_COLORS } from '@/lib/game/zones';
 import { MAP_CONFIG } from '@/lib/map/style';
 import { ZonePopup } from '@/components/game/ZonePopup';
+import { selectActiveTab } from '@/store/game';
 
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!;
 
@@ -170,6 +171,7 @@ export default function CityMap() {
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const { mapView, nearby_players, setMapLoaded, setMapView, selectZone } = useGameStore();
   const selected_zone = useGameStore((s) => s.selected_zone);
+  const activeTab = useGameStore(selectActiveTab);
   const [popupPos, setPopupPos] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
@@ -308,7 +310,7 @@ export default function CityMap() {
     <div className="absolute inset-0" style={{ background: '#060810' }}>
       <div ref={mapContainer} className="absolute inset-0 w-full h-full" />
       <AnimatePresence>
-        {selected_zone && popupPos && (
+        {selected_zone && popupPos && activeTab === 'map' && (
           <ZonePopup
             key={selected_zone.id}
             zone={selected_zone}

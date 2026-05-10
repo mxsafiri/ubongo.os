@@ -2,15 +2,21 @@
 
 import dynamic from 'next/dynamic';
 import { useEffect } from 'react';
-import { useGameStore, selectPhase, selectMapLoaded } from '@/store/game';
+import { AnimatePresence } from 'framer-motion';
+import { useGameStore, selectPhase, selectMapLoaded, selectActiveTab } from '@/store/game';
 import Onboarding from '@/components/game/Onboarding';
 import HUD from '@/components/layout/HUD';
+import { SurfScreen } from '@/components/screens/SurfScreen';
+import { ExploreScreen } from '@/components/screens/ExploreScreen';
+import { TasksScreen } from '@/components/screens/TasksScreen';
+import { ProfileScreen } from '@/components/screens/ProfileScreen';
 
 const CityMap = dynamic(() => import('@/components/map/CityMap'), { ssr: false });
 
 export default function SurfariPage() {
   const phase = useGameStore(selectPhase);
   const mapLoaded = useGameStore(selectMapLoaded);
+  const activeTab = useGameStore(selectActiveTab);
   const setPhase = useGameStore((s) => s.setPhase);
 
   // Advance when map loads
@@ -29,11 +35,22 @@ export default function SurfariPage() {
   }, [phase, setPhase]);
 
   const showHUD = phase === 'exploring' || phase === 'surfing' || phase === 'challenge' || phase === 'result';
+  const mapActive = activeTab === 'map' || activeTab === 'explore';
 
   return (
     <div className="surfari-root">
-      {/* Map always rendered */}
-      <CityMap />
+      {/* Map — always mounted, dimmed when a content screen is active */}
+      <div
+        className="absolute inset-0"
+        style={{
+          opacity: mapActive ? 1 : 0.35,
+          filter: mapActive ? 'none' : 'blur(3px)',
+          transition: 'opacity 0.35s ease, filter 0.35s ease',
+          pointerEvents: mapActive ? 'auto' : 'none',
+        }}
+      >
+        <CityMap />
+      </div>
 
       {/* Atmosphere vignette */}
       <div
@@ -63,7 +80,17 @@ export default function SurfariPage() {
       {/* Onboarding overlay */}
       {phase === 'onboarding' && <Onboarding />}
 
-      {/* HUD */}
+      {/* Screen overlays — rendered above map, below HUD */}
+      {showHUD && (
+        <AnimatePresence mode="wait">
+          {activeTab === 'surf' && <SurfScreen key="surf" />}
+          {activeTab === 'explore' && <ExploreScreen key="explore" />}
+          {activeTab === 'tasks' && <TasksScreen key="tasks" />}
+          {activeTab === 'profile' && <ProfileScreen key="profile" />}
+        </AnimatePresence>
+      )}
+
+      {/* HUD — always on top */}
       {showHUD && <HUD />}
     </div>
   );
