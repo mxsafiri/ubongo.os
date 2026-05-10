@@ -1,7 +1,7 @@
 'use client';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, TrendingUp, Shield, Footprints, ArrowRight } from 'lucide-react';
+import { X, TrendingUp, Shield, Footprints, Waves } from 'lucide-react';
 import { useGameStore, selectSelectedZone, selectPlayer } from '@/store/game';
 import { ZONE_TIER_COLORS } from '@/lib/game/zones';
 import { formatTokens } from '@/lib/utils';
@@ -26,14 +26,6 @@ const TYPE_LABELS: Record<Zone['type'], string> = {
   landmark:          'Landmark',
 };
 
-const TIER_GRADIENTS: Record<string, string> = {
-  crown:       'linear-gradient(135deg, rgba(245,158,11,0.25) 0%, rgba(245,158,11,0.05) 100%)',
-  jungle_deep: 'linear-gradient(135deg, rgba(124,58,237,0.25) 0%, rgba(124,58,237,0.05) 100%)',
-  coral_ridge: 'linear-gradient(135deg, rgba(0,212,255,0.2) 0%, rgba(0,212,255,0.04) 100%)',
-  savanna:     'linear-gradient(135deg, rgba(16,137,129,0.25) 0%, rgba(16,137,129,0.05) 100%)',
-  shoreline:   'linear-gradient(135deg, rgba(255,107,53,0.25) 0%, rgba(255,107,53,0.05) 100%)',
-};
-
 export default function ZonePanel() {
   const zone = useGameStore(selectSelectedZone);
   const player = useGameStore(selectPlayer);
@@ -48,172 +40,154 @@ export default function ZonePanel() {
       {zone && (
         <motion.div
           key={zone.id}
-          className="absolute bottom-0 left-0 right-0 z-20"
-          style={{ paddingBottom: 'calc(var(--safe-bottom) + 72px)' }}
+          className="absolute bottom-0 left-0 right-0 z-20 rounded-t-3xl overflow-hidden"
+          style={{
+            background: 'var(--color-surface)',
+            border: `1px solid ${tierColor}30`,
+            borderBottom: 'none',
+            boxShadow: `0 -12px 60px rgba(0,0,0,0.6), 0 -1px 0 ${tierColor}25`,
+            paddingBottom: 'calc(var(--safe-bottom) + 80px)',
+          }}
           initial={{ y: '100%' }}
           animate={{ y: 0 }}
           exit={{ y: '100%' }}
           transition={{ type: 'spring', stiffness: 340, damping: 34 }}
         >
-          {/* Hero image area */}
-          <div
-            className="relative overflow-hidden"
-            style={{
-              height: '120px',
-              background: TIER_GRADIENTS[zone.tier] ?? TIER_GRADIENTS.shoreline,
-              borderTop: `1px solid ${tierColor}44`,
-            }}
-          >
-            {/* Ambient grid pattern */}
-            <div
-              className="absolute inset-0"
-              style={{
-                backgroundImage: `
-                  linear-gradient(${tierColor}18 1px, transparent 1px),
-                  linear-gradient(90deg, ${tierColor}18 1px, transparent 1px)
-                `,
-                backgroundSize: '32px 32px',
-              }}
-            />
-            {/* Glow orb */}
-            <div
-              className="absolute"
-              style={{
-                width: '200px',
-                height: '200px',
-                borderRadius: '50%',
-                background: `radial-gradient(circle, ${tierColor}30 0%, transparent 70%)`,
-                top: '-60px',
-                right: '-40px',
-              }}
-            />
-            {/* Drag handle */}
-            <div className="absolute top-3 left-0 right-0 flex justify-center">
-              <div className="w-10 h-1 rounded-full" style={{ background: 'rgba(255,255,255,0.2)' }} />
-            </div>
+          {/* Drag handle */}
+          <div className="flex justify-center pt-3 pb-1">
+            <div className="w-9 h-1 rounded-full" style={{ background: 'rgba(255,255,255,0.12)' }} />
+          </div>
 
-            {/* Tier pill + close — absolute within hero */}
-            <div className="absolute bottom-4 left-5 right-5 flex items-end justify-between">
+          {/* Header row */}
+          <div className="flex items-start justify-between px-5 pt-3 pb-4">
+            <div className="flex flex-col gap-1.5">
+              {/* Tier pill */}
               <span
-                className="px-2.5 py-1 rounded-lg text-xs font-semibold"
+                className="self-start px-2 py-0.5 rounded-md text-xs font-semibold"
                 style={{
-                  background: `${tierColor}22`,
-                  border: `1px solid ${tierColor}55`,
+                  background: `${tierColor}18`,
+                  border: `1px solid ${tierColor}40`,
                   color: tierColor,
                   fontFamily: 'var(--font-mono)',
-                  letterSpacing: '0.06em',
+                  letterSpacing: '0.08em',
+                  fontSize: '10px',
                 }}
               >
                 {TIER_LABELS[zone.tier].toUpperCase()}
               </span>
 
-              <button
-                onClick={() => selectZone(null)}
-                className="flex items-center justify-center w-7 h-7 rounded-full"
-                style={{
-                  background: 'rgba(10,14,26,0.7)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  backdropFilter: 'blur(8px)',
-                }}
-              >
-                <X size={13} style={{ color: 'var(--text-secondary)' }} />
-              </button>
+              {/* Zone name */}
+              <h2 style={{
+                fontFamily: 'var(--font-display)',
+                fontWeight: 700,
+                fontSize: '24px',
+                color: 'var(--text-primary)',
+                letterSpacing: '-0.03em',
+                lineHeight: 1.1,
+              }}>
+                {zone.name}
+              </h2>
+
+              {/* District · type */}
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', letterSpacing: '0.01em' }}>
+                {zone.district} · {TYPE_LABELS[zone.type]}
+              </p>
             </div>
+
+            <button
+              onClick={() => selectZone(null)}
+              className="flex items-center justify-center w-8 h-8 rounded-full mt-1 flex-shrink-0"
+              style={{
+                background: 'rgba(255,255,255,0.05)',
+                border: '1px solid rgba(255,255,255,0.09)',
+              }}
+            >
+              <X size={14} style={{ color: 'var(--text-muted)' }} />
+            </button>
           </div>
 
-          {/* Card body */}
-          <div
-            className="px-5 pt-4 pb-5"
+          {/* Thin tier accent line */}
+          <div style={{ height: '1px', background: `linear-gradient(90deg, transparent, ${tierColor}55, transparent)`, marginBottom: '16px' }} />
+
+          {/* Stats row */}
+          <div className="grid grid-cols-3 gap-2 px-5 mb-5">
+            <StatCard
+              icon={<TrendingUp size={12} />}
+              label="Daily Yield"
+              value={formatTokens(zone.daily_yield)}
+              color="var(--color-gold)"
+            />
+            <StatCard
+              icon={<Shield size={12} />}
+              label="Claim"
+              value={`${zone.claim_strength}%`}
+              color="var(--color-accent)"
+            />
+            <StatCard
+              icon={<Footprints size={12} />}
+              label="Traces"
+              value={zone.trace_count.toString()}
+              color="var(--color-secondary)"
+            />
+          </div>
+
+          {/* Owner status */}
+          <div className="mx-5 mb-5 flex items-center gap-2 px-3 py-2 rounded-lg"
             style={{
-              background: 'var(--color-surface)',
-              borderTop: 'none',
+              background: isClaimed ? 'rgba(16,137,129,0.08)' : 'rgba(255,255,255,0.03)',
+              border: `1px solid ${isClaimed ? 'rgba(16,137,129,0.2)' : 'rgba(255,255,255,0.06)'}`,
             }}
           >
-            {/* Zone name + district */}
-            <h2 style={{
-              fontFamily: 'var(--font-display)',
-              fontWeight: 700,
-              fontSize: '22px',
-              color: 'var(--text-primary)',
-              letterSpacing: '-0.02em',
-              lineHeight: 1.15,
-              marginBottom: '4px',
-            }}>
-              {zone.name}
-            </h2>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-              {zone.district} · {TYPE_LABELS[zone.type]}
-            </p>
-
-            {/* Owner status */}
-            <div
-              className="flex items-center gap-2 px-3 py-2.5 rounded-xl mb-4"
-              style={{
-                background: isClaimed ? 'rgba(16,137,129,0.1)' : 'rgba(61,84,112,0.15)',
-                border: `1px solid ${isClaimed ? 'rgba(16,137,129,0.25)' : 'rgba(61,84,112,0.3)'}`,
-              }}
-            >
-              <span
-                className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                style={{ background: isClaimed ? 'var(--color-success)' : 'var(--text-muted)' }}
-              />
-              {isClaimed ? (
-                <span style={{ fontSize: '13px', color: 'var(--text-primary)' }}>
-                  Owned by{' '}
-                  <span style={{ color: zone.owner_color ?? 'var(--color-success)', fontWeight: 600 }}>
-                    @{zone.owner_handle}
-                  </span>
+            <span className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+              style={{ background: isClaimed ? 'var(--color-success)' : 'var(--text-muted)' }}
+            />
+            {isClaimed ? (
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                Owned by{' '}
+                <span style={{ color: zone.owner_color ?? 'var(--color-success)', fontWeight: 600 }}>
+                  @{zone.owner_handle}
                 </span>
-              ) : (
-                <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-                  Unclaimed — first to surf claims it
-                </span>
-              )}
-            </div>
+              </span>
+            ) : (
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                Unclaimed — first to surf claims it
+              </span>
+            )}
+          </div>
 
-            {/* Stats row */}
-            <div className="grid grid-cols-3 gap-2.5 mb-5">
-              <StatCard
-                icon={<TrendingUp size={13} />}
-                label="Daily Yield"
-                value={formatTokens(zone.daily_yield)}
-                color="var(--color-gold)"
-              />
-              <StatCard
-                icon={<Shield size={13} />}
-                label="Claim"
-                value={`${zone.claim_strength}%`}
-                color="var(--color-accent)"
-              />
-              <StatCard
-                icon={<Footprints size={13} />}
-                label="Traces"
-                value={zone.trace_count.toString()}
-                color="var(--color-secondary)"
-              />
-            </div>
-
-            {/* CTA */}
+          {/* CTA button */}
+          <div className="px-5">
             <motion.button
-              className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl font-semibold"
+              className="w-full flex items-center justify-center gap-2.5 rounded-2xl relative overflow-hidden"
               style={{
+                padding: '14px 20px',
                 background: isOwned
-                  ? `linear-gradient(135deg, ${tierColor} 0%, ${tierColor}99 100%)`
-                  : 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-accent) 100%)',
-                color: '#fff',
+                  ? `linear-gradient(135deg, ${tierColor}dd 0%, ${tierColor}88 100%)`
+                  : 'linear-gradient(135deg, #00D4FF 0%, #7C3AED 100%)',
+                boxShadow: isOwned
+                  ? `0 0 0 1px ${tierColor}44, 0 8px 32px ${tierColor}33`
+                  : '0 0 0 1px rgba(0,212,255,0.3), 0 8px 32px rgba(0,212,255,0.2)',
+              }}
+              whileTap={{ scale: 0.975 }}
+              transition={{ duration: 0.12 }}
+            >
+              {/* Shimmer overlay */}
+              <div
+                className="absolute inset-0 pointer-events-none"
+                style={{
+                  background: 'linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.07) 50%, transparent 70%)',
+                }}
+              />
+              <Waves size={15} style={{ color: 'rgba(255,255,255,0.9)', flexShrink: 0 }} />
+              <span style={{
                 fontFamily: 'var(--font-display)',
                 fontWeight: 600,
-                fontSize: '15px',
-                letterSpacing: '-0.01em',
-                boxShadow: isOwned
-                  ? `0 4px 24px ${tierColor}44`
-                  : '0 4px 24px rgba(0,212,255,0.3)',
-              }}
-              whileTap={{ scale: 0.985 }}
-              transition={{ duration: 0.15 }}
-            >
-              {isOwned ? 'Manage Zone' : 'Surf This Zone'}
-              <ArrowRight size={16} />
+                fontSize: '14px',
+                letterSpacing: '0.02em',
+                color: '#fff',
+              }}>
+                {isOwned ? 'Manage Zone' : 'Surf This Zone'}
+              </span>
             </motion.button>
           </div>
         </motion.div>
@@ -227,23 +201,29 @@ function StatCard({ icon, label, value, color }: {
 }) {
   return (
     <div
-      className="flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl"
+      className="flex flex-col items-center gap-1 py-3 px-2 rounded-xl"
       style={{
-        background: 'var(--color-surface2)',
-        border: '1px solid var(--color-border)',
+        background: 'rgba(255,255,255,0.03)',
+        border: '1px solid rgba(255,255,255,0.06)',
       }}
     >
-      <span style={{ color }}>{icon}</span>
+      <span style={{ color, opacity: 0.8 }}>{icon}</span>
       <span style={{
         fontFamily: 'var(--font-mono)',
         fontWeight: 600,
-        fontSize: '15px',
+        fontSize: '16px',
         color: 'var(--text-primary)',
+        letterSpacing: '-0.02em',
       }}>
         {value}
       </span>
-      <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-        {label}
+      <span style={{
+        fontSize: '10px',
+        color: 'var(--text-muted)',
+        fontFamily: 'var(--font-mono)',
+        letterSpacing: '0.04em',
+      }}>
+        {label.toUpperCase()}
       </span>
     </div>
   );
