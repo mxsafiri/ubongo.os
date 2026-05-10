@@ -143,9 +143,9 @@ html, body { height: 100%; }
 /* ─── SURFARI GAME PAGE ─── */
 .surfari-root {
   position: relative; width: 100%; height: 100%; overflow: hidden;
-  background: #060810;
-  font-family: var(--font-body, 'DM Sans', sans-serif);
-  color: var(--text-primary, #F0F4FF);
+  background: #0A0E1A;
+  font-family: var(--font-body, 'Inter', sans-serif);
+  color: var(--text-primary, #F0F6FF);
   -webkit-font-smoothing: antialiased;
 }
 
