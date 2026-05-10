@@ -179,7 +179,7 @@ export default function CityMap() {
 
     const map = new mapboxgl.Map({
       container: mapContainer.current,
-      style: 'mapbox://styles/mapbox/dark-v11',
+      style: 'mapbox://styles/mapbox/light-v11',
       center: [mapView.longitude, mapView.latitude],
       zoom: mapView.zoom,
       pitch: mapView.pitch,
@@ -193,30 +193,20 @@ export default function CityMap() {
     mapRef.current = map;
 
     map.on('load', () => {
-      // Remap every land-related layer to the dark game palette
+      // Tune light-v11 to match the app's blue-white palette
       const setFill = (id: string, color: string) => {
         if (map.getLayer(id)) map.setPaintProperty(id, 'fill-color', color);
       };
       const setLine = (id: string, color: string) => {
         if (map.getLayer(id)) map.setPaintProperty(id, 'line-color', color);
       };
-      const setBg = (id: string, color: string) => {
-        if (map.getLayer(id)) map.setPaintProperty(id, 'background-color', color);
-      };
 
-      setBg('background', '#0A0E1A');
-      setBg('land', '#0D1320');
-      setFill('landcover', '#0D1320');
-      setFill('landcover-crop', '#0D1320');
-      setFill('landcover-grass', '#0D1320');
-      setFill('landcover-wood', '#0F1825');
-      setFill('national-park', '#0D1825');
-      setFill('landuse', '#0F1622');
-      setFill('landuse-residential', '#0F1622');
-      setFill('water', '#071525');
-      setFill('water-shadow', '#071525');
-      setLine('waterway', '#0A1D30');
-      setLine('waterway-shadow', '#0A1D30');
+      setFill('water', '#B8D4E8');
+      setFill('water-shadow', '#B8D4E8');
+      setLine('waterway', '#99BCD6');
+      setLine('waterway-shadow', '#99BCD6');
+      setFill('landcover-wood', '#C8DDB8');
+      setFill('national-park', '#C4DAB4');
 
       addZoneLayers(map);
 
@@ -307,7 +297,7 @@ export default function CityMap() {
   }, [nearby_players]);
 
   return (
-    <div className="absolute inset-0" style={{ background: '#060810' }}>
+    <div className="absolute inset-0" style={{ background: 'var(--color-bg)' }}>
       <div ref={mapContainer} className="absolute inset-0 w-full h-full" />
       <AnimatePresence>
         {selected_zone && popupPos && activeTab === 'map' && (

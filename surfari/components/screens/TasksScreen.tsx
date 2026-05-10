@@ -16,7 +16,6 @@ function timeLeft(expiresAt: string): string {
 export function TasksScreen() {
   const nearbyZones = useGameStore(selectNearbyZones);
 
-  // Collect active task demands from zones in the store
   const tasks: Array<{ task: TaskDemand; zone: Zone }> = nearbyZones
     .filter((z) => z.task_demand !== null)
     .map((z) => ({ task: z.task_demand!, zone: z }));
@@ -24,16 +23,12 @@ export function TasksScreen() {
   return (
     <motion.div
       className="absolute inset-0 z-[15] flex flex-col"
-      style={{
-        paddingTop: 'calc(var(--safe-top) + 72px)',
-        paddingBottom: 'calc(var(--safe-bottom) + 88px)',
-      }}
+      style={{ paddingTop: 'calc(var(--safe-top) + 72px)', paddingBottom: 'calc(var(--safe-bottom) + 88px)' }}
       initial={{ opacity: 0, x: 24 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 24 }}
       transition={{ type: 'spring', stiffness: 340, damping: 34 }}
     >
-      {/* Header */}
       <div className="px-4 pb-4">
         <h2 style={{
           fontFamily: 'var(--font-display)',
@@ -74,22 +69,17 @@ function TaskCard({ task, zone }: { task: TaskDemand; zone: Zone }) {
     <motion.div
       className="rounded-2xl overflow-hidden"
       style={{
-        background: 'rgba(17,27,39,0.95)',
-        border: '1px solid rgba(245,158,11,0.2)',
+        background: 'var(--surface-panel)',
+        border: '1px solid rgba(217,119,6,0.18)',
         backdropFilter: 'blur(20px)',
+        boxShadow: 'var(--shadow-card)',
       }}
       whileTap={{ scale: 0.99 }}
     >
       <div className="px-4 pt-4 pb-3">
         <div className="flex items-start justify-between mb-2">
           <div>
-            <p style={{
-              fontFamily: 'var(--font-display)',
-              fontWeight: 600,
-              fontSize: '15px',
-              color: 'var(--text-primary)',
-              letterSpacing: '-0.01em',
-            }}>
+            <p style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: '15px', color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
               {task.title}
             </p>
             <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
@@ -97,37 +87,25 @@ function TaskCard({ task, zone }: { task: TaskDemand; zone: Zone }) {
             </p>
           </div>
           <div className="flex flex-col items-end gap-1">
-            <span style={{
-              fontFamily: 'var(--font-mono)',
-              fontWeight: 600,
-              fontSize: '14px',
-              color: 'var(--color-gold)',
-            }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: '14px', color: 'var(--color-gold)' }}>
               {task.reward_tokens.toLocaleString()}T
             </span>
             <div className="flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
               <Clock size={10} />
-              <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)' }}>
-                {timeLeft(task.expires_at)}
-              </span>
+              <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)' }}>{timeLeft(task.expires_at)}</span>
             </div>
           </div>
         </div>
 
-        {/* Progress bar */}
         <div className="mb-3">
           <div className="flex justify-between mb-1">
             <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>PROGRESS</span>
             <span style={{ fontSize: '10px', color: 'var(--color-gold)', fontFamily: 'var(--font-mono)' }}>{pct}%</span>
           </div>
-          <div className="h-1 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }}>
+          <div className="h-1 rounded-full" style={{ background: 'var(--border-mid)' }}>
             <div
               className="h-full rounded-full"
-              style={{
-                width: `${pct}%`,
-                background: 'linear-gradient(90deg, var(--color-gold), var(--color-secondary))',
-                transition: 'width 0.4s ease',
-              }}
+              style={{ width: `${pct}%`, background: 'linear-gradient(90deg, var(--color-gold), var(--color-secondary))', transition: 'width 0.4s ease' }}
             />
           </div>
         </div>
@@ -155,10 +133,7 @@ function EmptyTasks() {
     <div className="flex flex-col items-center justify-center py-16 text-center">
       <div
         className="w-20 h-20 rounded-3xl flex items-center justify-center mb-5"
-        style={{
-          background: 'rgba(245,158,11,0.07)',
-          border: '1px solid rgba(245,158,11,0.15)',
-        }}
+        style={{ background: 'rgba(217,119,6,0.07)', border: '1px solid rgba(217,119,6,0.14)' }}
       >
         <ListChecks size={32} style={{ color: 'var(--color-gold)', opacity: 0.6 }} />
       </div>

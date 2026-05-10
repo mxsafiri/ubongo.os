@@ -10,7 +10,7 @@ const TIER_COLORS: Record<string, string> = {
   district: 'var(--color-primary)',
   baron: 'var(--color-accent)',
   architect: 'var(--color-gold)',
-  apex: '#FFD700',
+  apex: '#B45309',
 };
 
 const TIER_LABELS: Record<string, string> = {
@@ -34,10 +34,7 @@ export function ProfileScreen() {
         <div className="flex flex-col items-center gap-6 px-8 text-center">
           <div
             className="w-20 h-20 rounded-3xl flex items-center justify-center"
-            style={{
-              background: 'rgba(124,58,237,0.1)',
-              border: '1px solid rgba(124,58,237,0.2)',
-            }}
+            style={{ background: 'rgba(109,40,217,0.08)', border: '1px solid rgba(109,40,217,0.18)' }}
           >
             <User size={32} style={{ color: 'var(--color-accent)', opacity: 0.7 }} />
           </div>
@@ -61,9 +58,9 @@ export function ProfileScreen() {
           <button
             className="flex items-center gap-2 px-6 py-3 rounded-xl"
             style={{
-              background: 'linear-gradient(135deg, rgba(124,58,237,0.3) 0%, rgba(0,212,255,0.2) 100%)',
-              border: '1px solid rgba(124,58,237,0.4)',
-              color: 'var(--text-primary)',
+              background: 'rgba(109,40,217,0.08)',
+              border: '1px solid rgba(109,40,217,0.22)',
+              color: 'var(--color-accent)',
               fontFamily: 'var(--font-display)',
               fontWeight: 600,
               fontSize: '14px',
@@ -82,10 +79,7 @@ export function ProfileScreen() {
   return (
     <motion.div
       className="absolute inset-0 z-[15] flex flex-col"
-      style={{
-        paddingTop: 'calc(var(--safe-top) + 72px)',
-        paddingBottom: 'calc(var(--safe-bottom) + 88px)',
-      }}
+      style={{ paddingTop: 'calc(var(--safe-top) + 72px)', paddingBottom: 'calc(var(--safe-bottom) + 88px)' }}
       initial={{ opacity: 0, x: 32 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 32 }}
@@ -96,14 +90,15 @@ export function ProfileScreen() {
         <div
           className="flex items-center gap-4 p-4 rounded-2xl mb-4"
           style={{
-            background: 'rgba(17,27,39,0.95)',
-            border: `1px solid ${tierColor}25`,
+            background: 'var(--surface-panel)',
+            border: `1px solid ${tierColor}20`,
             backdropFilter: 'blur(20px)',
+            boxShadow: 'var(--shadow-card)',
           }}
         >
           <div
             className="w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0"
-            style={{ background: player.avatar_color, boxShadow: `0 0 20px ${player.avatar_color}60` }}
+            style={{ background: player.avatar_color, boxShadow: `0 0 20px ${player.avatar_color}50` }}
           >
             <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '22px', color: '#fff' }}>
               {player.handle[0].toUpperCase()}
@@ -111,21 +106,15 @@ export function ProfileScreen() {
           </div>
 
           <div className="flex-1 min-w-0">
-            <p style={{
-              fontFamily: 'var(--font-display)',
-              fontWeight: 700,
-              fontSize: '18px',
-              color: 'var(--text-primary)',
-              letterSpacing: '-0.02em',
-            }}>
+            <p style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '18px', color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
               @{player.handle}
             </p>
             <div className="flex items-center gap-1.5 mt-1">
               <span
                 className="px-2 py-0.5 rounded-md"
                 style={{
-                  background: `${tierColor}18`,
-                  border: `1px solid ${tierColor}40`,
+                  background: `${tierColor}14`,
+                  border: `1px solid ${tierColor}35`,
                   color: tierColor,
                   fontFamily: 'var(--font-mono)',
                   fontSize: '10px',
@@ -151,39 +140,15 @@ export function ProfileScreen() {
 
         {/* Stats grid */}
         <div className="grid grid-cols-2 gap-2.5 mb-4">
-          <StatCard
-            icon={<MapPin size={14} />}
-            label="Zones Owned"
-            value={String(player.zones_owned)}
-            color="var(--color-primary)"
-          />
-          <StatCard
-            icon={<TrendingUp size={14} />}
-            label="Assets"
-            value={String(player.assets_owned)}
-            color="var(--color-gold)"
-          />
-          <StatCard
-            icon={<Footprints size={14} />}
-            label="Traces Left"
-            value={String(player.traces_left)}
-            color="var(--color-secondary)"
-          />
-          <StatCard
-            icon={<Footprints size={14} />}
-            label="Traces Received"
-            value={String(player.traces_received)}
-            color="var(--color-accent)"
-          />
+          <StatCard icon={<MapPin size={14} />} label="Zones Owned" value={String(player.zones_owned)} color="var(--color-primary)" />
+          <StatCard icon={<TrendingUp size={14} />} label="Assets" value={String(player.assets_owned)} color="var(--color-gold)" />
+          <StatCard icon={<Footprints size={14} />} label="Traces Left" value={String(player.traces_left)} color="var(--color-secondary)" />
+          <StatCard icon={<Footprints size={14} />} label="Traces Received" value={String(player.traces_received)} color="var(--color-accent)" />
         </div>
 
-        {/* Activity line */}
         <div
           className="px-4 py-3 rounded-xl"
-          style={{
-            background: 'rgba(255,255,255,0.02)',
-            border: '1px solid rgba(255,255,255,0.05)',
-          }}
+          style={{ background: 'var(--surface-subtle)', border: '1px solid var(--border-subtle)' }}
         >
           <p style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
             LAST ACTIVE · {new Date(player.last_active).toLocaleDateString()}
@@ -200,11 +165,7 @@ function StatCard({ icon, label, value, color }: {
   return (
     <div
       className="px-4 py-4 rounded-2xl"
-      style={{
-        background: 'rgba(17,27,39,0.9)',
-        border: '1px solid rgba(255,255,255,0.05)',
-        backdropFilter: 'blur(12px)',
-      }}
+      style={{ background: 'var(--surface-panel)', border: '1px solid var(--border-subtle)', backdropFilter: 'blur(12px)', boxShadow: 'var(--shadow-card)' }}
     >
       <div className="flex items-center gap-1.5 mb-2" style={{ color, opacity: 0.8 }}>
         {icon}
@@ -212,13 +173,7 @@ function StatCard({ icon, label, value, color }: {
           {label.toUpperCase()}
         </span>
       </div>
-      <span style={{
-        fontFamily: 'var(--font-mono)',
-        fontWeight: 700,
-        fontSize: '28px',
-        color: 'var(--text-primary)',
-        letterSpacing: '-0.02em',
-      }}>
+      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: '28px', color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
         {value}
       </span>
     </div>

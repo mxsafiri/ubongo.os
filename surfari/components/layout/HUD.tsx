@@ -20,7 +20,7 @@ export default function HUD() {
         style={{
           paddingTop: 'calc(var(--safe-top) + 14px)',
           paddingBottom: '14px',
-          background: 'linear-gradient(to bottom, rgba(10,14,26,0.92) 0%, transparent 100%)',
+          background: `linear-gradient(to bottom, var(--hud-top) 0%, transparent 100%)`,
           backdropFilter: 'blur(2px)',
         }}
         initial={{ opacity: 0, y: -16 }}
@@ -47,22 +47,22 @@ export default function HUD() {
             value={player ? formatTokens(player.tide_tokens) : '—'}
             label="T"
             color="var(--color-gold)"
-            bg="rgba(245,158,11,0.1)"
-            border="rgba(245,158,11,0.25)"
+            bg="rgba(217,119,6,0.1)"
+            border="rgba(217,119,6,0.25)"
           />
           <StatChip
             value={String(player?.zones_owned ?? 0)}
             label="zones"
             color="var(--color-primary)"
-            bg="rgba(0,212,255,0.08)"
-            border="rgba(0,212,255,0.2)"
+            bg="rgba(0,153,194,0.08)"
+            border="rgba(0,153,194,0.2)"
           />
           <StatChip
             value={player?.tier ?? '—'}
             label="rank"
             color="var(--color-accent)"
-            bg="rgba(124,58,237,0.1)"
-            border="rgba(124,58,237,0.25)"
+            bg="rgba(109,40,217,0.08)"
+            border="rgba(109,40,217,0.2)"
             capitalize
           />
         </div>
@@ -71,8 +71,8 @@ export default function HUD() {
         <button
           className="relative flex items-center justify-center w-8 h-8 rounded-full flex-shrink-0"
           style={{
-            background: 'rgba(17,27,39,0.8)',
-            border: '1px solid var(--color-border-hi)',
+            background: 'var(--surface-subtle)',
+            border: '1px solid var(--border-mid)',
           }}
         >
           <Bell size={14} style={{ color: 'var(--text-secondary)' }} />
@@ -93,42 +93,27 @@ export default function HUD() {
         style={{
           paddingBottom: 'calc(var(--safe-bottom) + 8px)',
           paddingTop: '8px',
-          background: 'linear-gradient(to top, rgba(10,14,26,0.97) 60%, transparent 100%)',
+          background: `linear-gradient(to top, var(--hud-bottom) 60%, transparent 100%)`,
         }}
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
       >
         <div className="flex items-end justify-around px-4">
-          <NavBtn
-            icon={<Map size={20} />}
-            label="Map"
-            tab="map"
-            activeTab={activeTab}
-            onPress={setActiveTab}
-          />
-          <NavBtn
-            icon={<Zap size={20} />}
-            label="Surf"
-            tab="surf"
-            activeTab={activeTab}
-            onPress={setActiveTab}
-          />
+          <NavBtn icon={<Map size={20} />} label="Map" tab="map" activeTab={activeTab} onPress={setActiveTab} />
+          <NavBtn icon={<Zap size={20} />} label="Surf" tab="surf" activeTab={activeTab} onPress={setActiveTab} />
 
           {/* Centre explore pulse */}
-          <button
-            className="flex flex-col items-center gap-1 pb-1"
-            onClick={() => setActiveTab('explore')}
-          >
+          <button className="flex flex-col items-center gap-1 pb-1" onClick={() => setActiveTab('explore')}>
             <div
               className="relative w-14 h-14 rounded-full flex items-center justify-center"
               style={{
                 background: activeTab === 'explore'
-                  ? 'linear-gradient(135deg, #00D4FF 0%, #7C3AED 100%)'
-                  : 'linear-gradient(135deg, rgba(0,212,255,0.7) 0%, rgba(124,58,237,0.7) 100%)',
+                  ? 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-accent) 100%)'
+                  : 'linear-gradient(135deg, rgba(0,153,194,0.85) 0%, rgba(109,40,217,0.85) 100%)',
                 boxShadow: activeTab === 'explore'
-                  ? '0 0 32px rgba(0,212,255,0.5), 0 0 64px rgba(124,58,237,0.3)'
-                  : '0 0 24px rgba(0,212,255,0.35), 0 0 48px rgba(124,58,237,0.2)',
+                  ? '0 0 28px rgba(0,153,194,0.4), 0 0 56px rgba(109,40,217,0.2)'
+                  : '0 0 20px rgba(0,153,194,0.25), 0 0 40px rgba(109,40,217,0.12)',
                 transition: 'all 0.25s ease',
               }}
             >
@@ -136,13 +121,13 @@ export default function HUD() {
               {activeTab !== 'explore' && (
                 <span
                   className="absolute inset-0 rounded-full animate-ping"
-                  style={{ background: 'rgba(0,212,255,0.15)', animationDuration: '2.4s' }}
+                  style={{ background: 'rgba(0,153,194,0.15)', animationDuration: '2.4s' }}
                 />
               )}
             </div>
             <span style={{
               fontSize: '10px',
-              color: activeTab === 'explore' ? 'var(--color-primary)' : 'rgba(0,212,255,0.7)',
+              color: activeTab === 'explore' ? 'var(--color-primary)' : 'var(--text-muted)',
               fontFamily: 'var(--font-mono)',
               letterSpacing: '0.08em',
             }}>
@@ -150,20 +135,8 @@ export default function HUD() {
             </span>
           </button>
 
-          <NavBtn
-            icon={<ListChecks size={20} />}
-            label="Tasks"
-            tab="tasks"
-            activeTab={activeTab}
-            onPress={setActiveTab}
-          />
-          <NavBtn
-            icon={<User size={20} />}
-            label="Profile"
-            tab="profile"
-            activeTab={activeTab}
-            onPress={setActiveTab}
-          />
+          <NavBtn icon={<ListChecks size={20} />} label="Tasks" tab="tasks" activeTab={activeTab} onPress={setActiveTab} />
+          <NavBtn icon={<User size={20} />} label="Profile" tab="profile" activeTab={activeTab} onPress={setActiveTab} />
         </div>
       </motion.div>
     </>
@@ -176,10 +149,7 @@ function StatChip({
   value: string; label: string; color: string; bg: string; border: string; capitalize?: boolean;
 }) {
   return (
-    <div
-      className="flex items-baseline gap-1 px-2.5 py-1 rounded-lg"
-      style={{ background: bg, border: `1px solid ${border}` }}
-    >
+    <div className="flex items-baseline gap-1 px-2.5 py-1 rounded-lg" style={{ background: bg, border: `1px solid ${border}` }}>
       <span style={{
         fontFamily: 'var(--font-mono)',
         fontWeight: 600,
@@ -199,18 +169,11 @@ function StatChip({
 function NavBtn({
   icon, label, tab, activeTab, onPress,
 }: {
-  icon: React.ReactNode;
-  label: string;
-  tab: GameTab;
-  activeTab: GameTab;
-  onPress: (tab: GameTab) => void;
+  icon: React.ReactNode; label: string; tab: GameTab; activeTab: GameTab; onPress: (tab: GameTab) => void;
 }) {
   const isActive = activeTab === tab;
   return (
-    <button
-      className="flex flex-col items-center gap-1 px-3 py-2"
-      onClick={() => onPress(tab)}
-    >
+    <button className="flex flex-col items-center gap-1 px-3 py-2" onClick={() => onPress(tab)}>
       <span style={{ color: isActive ? 'var(--color-primary)' : 'var(--text-muted)', transition: 'color 0.2s' }}>
         {icon}
       </span>

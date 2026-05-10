@@ -39,10 +39,7 @@ export function ExploreScreen() {
   return (
     <motion.div
       className="absolute inset-0 z-[15] flex flex-col"
-      style={{
-        paddingTop: 'calc(var(--safe-top) + 72px)',
-        paddingBottom: 'calc(var(--safe-bottom) + 88px)',
-      }}
+      style={{ paddingTop: 'calc(var(--safe-top) + 72px)', paddingBottom: 'calc(var(--safe-bottom) + 88px)' }}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
@@ -53,9 +50,10 @@ export function ExploreScreen() {
         <div
           className="flex items-center gap-2.5 px-4 py-3 rounded-2xl"
           style={{
-            background: 'rgba(17,27,39,0.95)',
-            border: '1px solid rgba(255,255,255,0.08)',
+            background: 'var(--surface-panel)',
+            border: '1px solid var(--border-mid)',
             backdropFilter: 'blur(20px)',
+            boxShadow: 'var(--shadow-card)',
           }}
         >
           <Search size={15} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
@@ -64,11 +62,7 @@ export function ExploreScreen() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search zones or districts…"
             className="flex-1 bg-transparent outline-none"
-            style={{
-              fontSize: '14px',
-              color: 'var(--text-primary)',
-              fontFamily: 'var(--font-body)',
-            }}
+            style={{ fontSize: '14px', color: 'var(--text-primary)', fontFamily: 'var(--font-body)' }}
           />
           {query && (
             <button onClick={() => setQuery('')} style={{ color: 'var(--text-muted)', fontSize: '12px' }}>✕</button>
@@ -92,8 +86,8 @@ export function ExploreScreen() {
               <span
                 className="px-2 py-0.5 rounded-md"
                 style={{
-                  background: `${ZONE_TIER_COLORS[tier]}18`,
-                  border: `1px solid ${ZONE_TIER_COLORS[tier]}35`,
+                  background: `${ZONE_TIER_COLORS[tier]}14`,
+                  border: `1px solid ${ZONE_TIER_COLORS[tier]}30`,
                   color: ZONE_TIER_COLORS[tier],
                   fontFamily: 'var(--font-mono)',
                   fontSize: '10px',
@@ -133,17 +127,17 @@ function ZoneRow({ zone, onTap }: { zone: Zone; onTap: (z: Zone) => void }) {
     <motion.button
       className="w-full flex items-center gap-3 px-3.5 py-3 rounded-xl text-left"
       style={{
-        background: 'rgba(17,27,39,0.8)',
-        border: '1px solid rgba(255,255,255,0.05)',
+        background: 'var(--surface-row)',
+        border: '1px solid var(--border-subtle)',
         backdropFilter: 'blur(12px)',
+        boxShadow: 'var(--shadow-card)',
       }}
       whileTap={{ scale: 0.98 }}
       onClick={() => onTap(zone)}
     >
-      {/* Dot */}
       <div
         className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-        style={{ background: tierColor, boxShadow: `0 0 6px ${tierColor}80` }}
+        style={{ background: tierColor, boxShadow: `0 0 6px ${tierColor}60` }}
       />
 
       <div className="flex-1 min-w-0">
@@ -165,19 +159,10 @@ function ZoneRow({ zone, onTap }: { zone: Zone; onTap: (z: Zone) => void }) {
       </div>
 
       <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
-        <span style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: '12px',
-          color: 'var(--color-gold)',
-          fontWeight: 600,
-        }}>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--color-gold)', fontWeight: 600 }}>
           {zone.daily_yield.toLocaleString()}T
         </span>
-        <span style={{
-          fontSize: '9px',
-          color: isClaimed ? 'var(--color-success)' : 'var(--text-muted)',
-          fontFamily: 'var(--font-mono)',
-        }}>
+        <span style={{ fontSize: '9px', color: isClaimed ? 'var(--color-success)' : 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
           {isClaimed ? `@${zone.owner_handle}` : 'OPEN'}
         </span>
       </div>

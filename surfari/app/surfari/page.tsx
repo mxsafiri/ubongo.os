@@ -52,14 +52,13 @@ export default function SurfariPage() {
         <CityMap />
       </div>
 
-      {/* Atmosphere vignette */}
+      {/* Atmosphere vignette — subtle brand tinting on corners */}
       <div
         className="absolute inset-0 pointer-events-none z-[1]"
         style={{
           background: `
-            radial-gradient(ellipse 60% 40% at 20% 80%, rgba(0,194,255,0.06) 0%, transparent 70%),
-            radial-gradient(ellipse 50% 40% at 80% 20%, rgba(124,92,252,0.06) 0%, transparent 70%),
-            radial-gradient(ellipse 40% 30% at 60% 90%, rgba(255,122,53,0.04) 0%, transparent 60%)
+            radial-gradient(ellipse 50% 35% at 10% 90%, rgba(0,153,194,0.05) 0%, transparent 70%),
+            radial-gradient(ellipse 40% 30% at 90% 10%, rgba(109,40,217,0.04) 0%, transparent 70%)
           `,
         }}
       />
