@@ -1,13 +1,14 @@
 'use client';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, TrendingUp, Shield, Footprints, Waves } from 'lucide-react';
+import { TrendingUp, Shield, Footprints, Waves } from 'lucide-react';
 import { useGameStore, selectSelectedZone, selectPlayer } from '@/store/game';
 import { ZONE_TIER_COLORS } from '@/lib/game/zones';
 import { formatTokens } from '@/lib/utils';
+import { ZoneCard } from '@/components/ui/zone-card';
 import type { Zone } from '@/types';
 
-const TIER_LABELS: Record<Zone['tier'], string> = {
+export const TIER_LABELS: Record<Zone['tier'], string> = {
   crown:       'Crown',
   jungle_deep: 'Jungle Deep',
   coral_ridge: 'Coral Ridge',
@@ -15,7 +16,7 @@ const TIER_LABELS: Record<Zone['tier'], string> = {
   shoreline:   'Shoreline',
 };
 
-const TYPE_LABELS: Record<Zone['type'], string> = {
+export const TYPE_LABELS: Record<Zone['type'], string> = {
   street_market:     'Street Market',
   waterfront:        'Waterfront',
   business_district: 'Business District',
@@ -40,13 +41,13 @@ export default function ZonePanel() {
       {zone && (
         <motion.div
           key={zone.id}
-          className="absolute bottom-0 left-0 right-0 z-20 rounded-t-3xl overflow-hidden"
+          className="absolute bottom-0 left-0 right-0 z-20 rounded-t-3xl"
           style={{
             background: 'var(--color-surface)',
-            border: `1px solid ${tierColor}30`,
+            border: `1px solid ${tierColor}28`,
             borderBottom: 'none',
-            boxShadow: `0 -12px 60px rgba(0,0,0,0.6), 0 -1px 0 ${tierColor}25`,
-            paddingBottom: 'calc(var(--safe-bottom) + 80px)',
+            boxShadow: `0 -16px 60px rgba(0,0,0,0.65), 0 -1px 0 ${tierColor}20`,
+            paddingBottom: 'calc(var(--safe-bottom) + 84px)',
           }}
           initial={{ y: '100%' }}
           animate={{ y: 0 }}
@@ -54,93 +55,39 @@ export default function ZonePanel() {
           transition={{ type: 'spring', stiffness: 340, damping: 34 }}
         >
           {/* Drag handle */}
-          <div className="flex justify-center pt-3 pb-1">
-            <div className="w-9 h-1 rounded-full" style={{ background: 'rgba(255,255,255,0.12)' }} />
+          <div className="flex justify-center pt-3 pb-2">
+            <div className="w-9 h-1 rounded-full" style={{ background: 'rgba(255,255,255,0.1)' }} />
           </div>
 
-          {/* Header row */}
-          <div className="flex items-start justify-between px-5 pt-3 pb-4">
-            <div className="flex flex-col gap-1.5">
-              {/* Tier pill */}
-              <span
-                className="self-start px-2 py-0.5 rounded-md text-xs font-semibold"
-                style={{
-                  background: `${tierColor}18`,
-                  border: `1px solid ${tierColor}40`,
-                  color: tierColor,
-                  fontFamily: 'var(--font-mono)',
-                  letterSpacing: '0.08em',
-                  fontSize: '10px',
-                }}
-              >
-                {TIER_LABELS[zone.tier].toUpperCase()}
-              </span>
-
-              {/* Zone name */}
-              <h2 style={{
-                fontFamily: 'var(--font-display)',
-                fontWeight: 700,
-                fontSize: '24px',
-                color: 'var(--text-primary)',
-                letterSpacing: '-0.03em',
-                lineHeight: 1.1,
-              }}>
-                {zone.name}
-              </h2>
-
-              {/* District · type */}
-              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', letterSpacing: '0.01em' }}>
-                {zone.district} · {TYPE_LABELS[zone.type]}
-              </p>
-            </div>
-
-            <button
-              onClick={() => selectZone(null)}
-              className="flex items-center justify-center w-8 h-8 rounded-full mt-1 flex-shrink-0"
-              style={{
-                background: 'rgba(255,255,255,0.05)',
-                border: '1px solid rgba(255,255,255,0.09)',
-              }}
-            >
-              <X size={14} style={{ color: 'var(--text-muted)' }} />
-            </button>
+          {/* Zone card hero */}
+          <div className="px-4 pb-2">
+            <ZoneCard
+              zone={zone}
+              tierColor={tierColor}
+              tierLabel={TIER_LABELS[zone.tier]}
+              typeLabel={TYPE_LABELS[zone.type]}
+            />
           </div>
 
-          {/* Thin tier accent line */}
-          <div style={{ height: '1px', background: `linear-gradient(90deg, transparent, ${tierColor}55, transparent)`, marginBottom: '16px' }} />
+          {/* Divider */}
+          <div className="mx-4 my-4" style={{ height: '1px', background: `linear-gradient(90deg, transparent, ${tierColor}30, transparent)` }} />
 
           {/* Stats row */}
-          <div className="grid grid-cols-3 gap-2 px-5 mb-5">
-            <StatCard
-              icon={<TrendingUp size={12} />}
-              label="Daily Yield"
-              value={formatTokens(zone.daily_yield)}
-              color="var(--color-gold)"
-            />
-            <StatCard
-              icon={<Shield size={12} />}
-              label="Claim"
-              value={`${zone.claim_strength}%`}
-              color="var(--color-accent)"
-            />
-            <StatCard
-              icon={<Footprints size={12} />}
-              label="Traces"
-              value={zone.trace_count.toString()}
-              color="var(--color-secondary)"
-            />
+          <div className="grid grid-cols-3 gap-2 px-4 mb-4">
+            <StatCard icon={<TrendingUp size={12} />} label="YIELD" value={formatTokens(zone.daily_yield)} color="var(--color-gold)" />
+            <StatCard icon={<Shield size={12} />} label="CLAIM" value={`${zone.claim_strength}%`} color="var(--color-accent)" />
+            <StatCard icon={<Footprints size={12} />} label="TRACES" value={zone.trace_count.toString()} color="var(--color-secondary)" />
           </div>
 
           {/* Owner status */}
-          <div className="mx-5 mb-5 flex items-center gap-2 px-3 py-2 rounded-lg"
+          <div className="mx-4 mb-4 flex items-center gap-2 px-3 py-2 rounded-lg"
             style={{
               background: isClaimed ? 'rgba(16,137,129,0.08)' : 'rgba(255,255,255,0.03)',
-              border: `1px solid ${isClaimed ? 'rgba(16,137,129,0.2)' : 'rgba(255,255,255,0.06)'}`,
+              border: `1px solid ${isClaimed ? 'rgba(16,137,129,0.2)' : 'rgba(255,255,255,0.05)'}`,
             }}
           >
             <span className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-              style={{ background: isClaimed ? 'var(--color-success)' : 'var(--text-muted)' }}
-            />
+              style={{ background: isClaimed ? 'var(--color-success)' : 'var(--text-muted)' }} />
             {isClaimed ? (
               <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
                 Owned by{' '}
@@ -155,8 +102,8 @@ export default function ZonePanel() {
             )}
           </div>
 
-          {/* CTA button */}
-          <div className="px-5">
+          {/* CTA */}
+          <div className="px-4">
             <motion.button
               className="w-full flex items-center justify-center gap-2.5 rounded-2xl relative overflow-hidden"
               style={{
@@ -170,14 +117,10 @@ export default function ZonePanel() {
               }}
               whileTap={{ scale: 0.975 }}
               transition={{ duration: 0.12 }}
+              onClick={() => selectZone(null)}
             >
-              {/* Shimmer overlay */}
-              <div
-                className="absolute inset-0 pointer-events-none"
-                style={{
-                  background: 'linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.07) 50%, transparent 70%)',
-                }}
-              />
+              <div className="absolute inset-0 pointer-events-none"
+                style={{ background: 'linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.07) 50%, transparent 70%)' }} />
               <Waves size={15} style={{ color: 'rgba(255,255,255,0.9)', flexShrink: 0 }} />
               <span style={{
                 fontFamily: 'var(--font-display)',
@@ -200,30 +143,14 @@ function StatCard({ icon, label, value, color }: {
   icon: React.ReactNode; label: string; value: string; color: string;
 }) {
   return (
-    <div
-      className="flex flex-col items-center gap-1 py-3 px-2 rounded-xl"
-      style={{
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.06)',
-      }}
-    >
+    <div className="flex flex-col items-center gap-1 py-3 px-2 rounded-xl"
+      style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
       <span style={{ color, opacity: 0.8 }}>{icon}</span>
-      <span style={{
-        fontFamily: 'var(--font-mono)',
-        fontWeight: 600,
-        fontSize: '16px',
-        color: 'var(--text-primary)',
-        letterSpacing: '-0.02em',
-      }}>
+      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: '16px', color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
         {value}
       </span>
-      <span style={{
-        fontSize: '10px',
-        color: 'var(--text-muted)',
-        fontFamily: 'var(--font-mono)',
-        letterSpacing: '0.04em',
-      }}>
-        {label.toUpperCase()}
+      <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em' }}>
+        {label}
       </span>
     </div>
   );
