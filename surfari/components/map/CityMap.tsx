@@ -210,11 +210,14 @@ export default function CityMap() {
 
       addZoneLayers(map);
 
-      // Zone click
+      // Zone click — prefer live store data (ownership), fall back to static
       map.on('click', 'zones-core', (e) => {
         if (!e.features?.[0]) return;
         const zoneId = e.features[0].properties?.id as string;
-        const zone = DAR_ZONES.find((z) => z.id === zoneId);
+        const storeZones = useGameStore.getState().nearby_zones;
+        const zone =
+          storeZones.find((z) => z.id === zoneId) ??
+          DAR_ZONES.find((z) => z.id === zoneId);
         if (zone) selectZone(zone);
       });
 

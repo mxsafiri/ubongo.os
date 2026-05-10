@@ -3,7 +3,7 @@
 import dynamic from 'next/dynamic';
 import { useEffect } from 'react';
 import { AnimatePresence } from 'framer-motion';
-import { useGameStore, selectPhase, selectMapLoaded, selectActiveTab } from '@/store/game';
+import { useGameStore, selectPhase, selectMapLoaded, selectActiveTab, selectPlayer } from '@/store/game';
 import Onboarding from '@/components/game/Onboarding';
 import HUD from '@/components/layout/HUD';
 import { SurfScreen } from '@/components/screens/SurfScreen';
@@ -17,7 +17,9 @@ export default function SurfariPage() {
   const phase = useGameStore(selectPhase);
   const mapLoaded = useGameStore(selectMapLoaded);
   const activeTab = useGameStore(selectActiveTab);
+  const player = useGameStore(selectPlayer);
   const setPhase = useGameStore((s) => s.setPhase);
+  const fetchZones = useGameStore((s) => s.fetchZones);
 
   // Advance when map loads
   useEffect(() => {
@@ -26,6 +28,11 @@ export default function SurfariPage() {
       return () => clearTimeout(t);
     }
   }, [mapLoaded, phase, setPhase]);
+
+  // Fetch live zone data from DB when the player enters exploring
+  useEffect(() => {
+    if (phase === 'exploring') fetchZones();
+  }, [phase, fetchZones]);
 
   // Hard fallback — never stay stuck on loading for more than 5s
   useEffect(() => {

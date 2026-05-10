@@ -42,6 +42,8 @@ interface GameStore {
   addNotification: (notification: Omit<GameNotification, 'id' | 'timestamp' | 'read'>) => void;
   markNotificationRead: (id: string) => void;
   clearNotifications: () => void;
+  fetchZones: () => Promise<void>;
+  surfZone: (zoneId: string) => Promise<void>;
 }
 
 export const useGameStore = create<GameStore>()(
@@ -136,6 +138,42 @@ export const useGameStore = create<GameStore>()(
       })),
 
     clearNotifications: () => set({ notifications: [] }),
+
+    fetchZones: async () => {
+      try {
+        const res = await fetch('/api/game/zones');
+        if (!res.ok) return;
+        const { zones } = await res.json();
+        set({ nearby_zones: zones });
+      } catch (err) {
+        console.error('fetchZones', err);
+      }
+    },
+
+    surfZone: async (zoneId: string) => {
+      const { player } = get();
+      if (!player) return;
+      try {
+        const res = await fetch(`/api/game/zones/${zoneId}/surf`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ player_id: player.id }),
+        });
+        if (!res.ok) return;
+        const { zone: zoneUpdate, player: updatedPlayer } = await res.json();
+        set((state) => ({
+          player: updatedPlayer,
+          nearby_zones: state.nearby_zones.map((z) =>
+            z.id === zoneId ? { ...z, ...zoneUpdate } : z
+          ),
+          selected_zone: state.selected_zone?.id === zoneId
+            ? { ...state.selected_zone, ...zoneUpdate }
+            : state.selected_zone,
+        }));
+      } catch (err) {
+        console.error('surfZone', err);
+      }
+    },
   }))
 );
 

@@ -2,6 +2,7 @@
 
 import { motion } from 'framer-motion';
 import { Waves, MapPin, TrendingUp, Shield } from 'lucide-react';
+import { useState } from 'react';
 import { useGameStore, selectSelectedZone } from '@/store/game';
 import { ZONE_TIER_COLORS } from '@/lib/game/zones';
 import { formatTokens } from '@/lib/utils';
@@ -22,6 +23,9 @@ export function SurfScreen() {
   const zone = useGameStore(selectSelectedZone);
   const setActiveTab = useGameStore((s) => s.setActiveTab);
   const selectZone = useGameStore((s) => s.selectZone);
+  const surfZone = useGameStore((s) => s.surfZone);
+  const player = useGameStore((s) => s.player);
+  const [surfing, setSurfing] = useState(false);
 
   if (!zone) {
     return (
@@ -139,29 +143,46 @@ export function SurfScreen() {
           </div>
 
           {/* CTA */}
-          <motion.button
-            className="w-full flex items-center justify-center gap-2.5 rounded-2xl relative overflow-hidden"
-            style={{
-              padding: '14px 20px',
-              background: 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-accent) 100%)',
-              boxShadow: '0 4px 20px rgba(0,153,194,0.28)',
-            }}
-            whileTap={{ scale: 0.975 }}
-            transition={{ duration: 0.12 }}
-          >
-            <div className="absolute inset-0 pointer-events-none"
-              style={{ background: 'linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.1) 50%, transparent 70%)' }} />
-            <Waves size={15} style={{ color: '#fff' }} />
-            <span style={{
-              fontFamily: 'var(--font-display)',
-              fontWeight: 600,
-              fontSize: '14px',
-              color: '#fff',
-              letterSpacing: '0.02em',
-            }}>
-              {isClaimed ? 'Challenge Owner' : 'Claim This Zone'}
-            </span>
-          </motion.button>
+          {!player ? (
+            <p style={{ textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)', padding: '14px 0' }}>
+              Sign in to surf zones
+            </p>
+          ) : (
+            <motion.button
+              className="w-full flex items-center justify-center gap-2.5 rounded-2xl relative overflow-hidden"
+              style={{
+                padding: '14px 20px',
+                background: surfing
+                  ? 'var(--surface-subtle)'
+                  : 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-accent) 100%)',
+                boxShadow: surfing ? 'none' : '0 4px 20px rgba(0,153,194,0.28)',
+                transition: 'all 0.2s',
+              }}
+              whileTap={{ scale: 0.975 }}
+              transition={{ duration: 0.12 }}
+              disabled={surfing}
+              onClick={async () => {
+                setSurfing(true);
+                await surfZone(zone.id);
+                setSurfing(false);
+              }}
+            >
+              {!surfing && (
+                <div className="absolute inset-0 pointer-events-none"
+                  style={{ background: 'linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.1) 50%, transparent 70%)' }} />
+              )}
+              <Waves size={15} style={{ color: surfing ? 'var(--text-muted)' : '#fff' }} />
+              <span style={{
+                fontFamily: 'var(--font-display)',
+                fontWeight: 600,
+                fontSize: '14px',
+                color: surfing ? 'var(--text-muted)' : '#fff',
+                letterSpacing: '0.02em',
+              }}>
+                {surfing ? 'Surfing…' : isClaimed ? 'Challenge Owner' : 'Claim This Zone'}
+              </span>
+            </motion.button>
+          )}
         </div>
       </div>
     </motion.div>
