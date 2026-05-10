@@ -24,6 +24,8 @@ export type ChallengeType =
 
 export type GamePhase = 'loading' | 'onboarding' | 'tagging' | 'exploring' | 'surfing' | 'challenge' | 'result';
 
+export type GameTab = 'map' | 'surf' | 'explore' | 'tasks' | 'profile';
+
 export type StakeTier = 'ripple' | 'current' | 'wave' | 'apex_tide';
 
 export type InfrastructureType =

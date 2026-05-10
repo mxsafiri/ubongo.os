@@ -2,17 +2,24 @@
 
 import dynamic from 'next/dynamic';
 import { useEffect } from 'react';
-import { useGameStore, selectPhase, selectMapLoaded } from '@/store/game';
+import { AnimatePresence } from 'framer-motion';
+import { useGameStore, selectPhase, selectMapLoaded, selectActiveTab, selectPlayer } from '@/store/game';
 import Onboarding from '@/components/game/Onboarding';
 import HUD from '@/components/layout/HUD';
-import ZonePanel from '@/components/game/ZonePanel';
+import { SurfScreen } from '@/components/screens/SurfScreen';
+import { ExploreScreen } from '@/components/screens/ExploreScreen';
+import { TasksScreen } from '@/components/screens/TasksScreen';
+import { ProfileScreen } from '@/components/screens/ProfileScreen';
 
 const CityMap = dynamic(() => import('@/components/map/CityMap'), { ssr: false });
 
 export default function SurfariPage() {
   const phase = useGameStore(selectPhase);
   const mapLoaded = useGameStore(selectMapLoaded);
+  const activeTab = useGameStore(selectActiveTab);
+  const player = useGameStore(selectPlayer);
   const setPhase = useGameStore((s) => s.setPhase);
+  const fetchZones = useGameStore((s) => s.fetchZones);
 
   // Advance when map loads
   useEffect(() => {
@@ -22,6 +29,11 @@ export default function SurfariPage() {
     }
   }, [mapLoaded, phase, setPhase]);
 
+  // Fetch live zone data from DB when the player enters exploring
+  useEffect(() => {
+    if (phase === 'exploring') fetchZones();
+  }, [phase, fetchZones]);
+
   // Hard fallback — never stay stuck on loading for more than 5s
   useEffect(() => {
     if (phase !== 'loading') return;
@@ -30,20 +42,30 @@ export default function SurfariPage() {
   }, [phase, setPhase]);
 
   const showHUD = phase === 'exploring' || phase === 'surfing' || phase === 'challenge' || phase === 'result';
+  const mapActive = activeTab === 'map' || activeTab === 'explore';
 
   return (
     <div className="surfari-root">
-      {/* Map always rendered */}
-      <CityMap />
+      {/* Map — always mounted, dimmed when a content screen is active */}
+      <div
+        className="absolute inset-0"
+        style={{
+          opacity: mapActive ? 1 : 0.35,
+          filter: mapActive ? 'none' : 'blur(3px)',
+          transition: 'opacity 0.35s ease, filter 0.35s ease',
+          pointerEvents: mapActive ? 'auto' : 'none',
+        }}
+      >
+        <CityMap />
+      </div>
 
-      {/* Atmosphere vignette */}
+      {/* Atmosphere vignette — subtle brand tinting on corners */}
       <div
         className="absolute inset-0 pointer-events-none z-[1]"
         style={{
           background: `
-            radial-gradient(ellipse 60% 40% at 20% 80%, rgba(0,194,255,0.06) 0%, transparent 70%),
-            radial-gradient(ellipse 50% 40% at 80% 20%, rgba(124,92,252,0.06) 0%, transparent 70%),
-            radial-gradient(ellipse 40% 30% at 60% 90%, rgba(255,122,53,0.04) 0%, transparent 60%)
+            radial-gradient(ellipse 50% 35% at 10% 90%, rgba(0,153,194,0.05) 0%, transparent 70%),
+            radial-gradient(ellipse 40% 30% at 90% 10%, rgba(109,40,217,0.04) 0%, transparent 70%)
           `,
         }}
       />
@@ -64,11 +86,18 @@ export default function SurfariPage() {
       {/* Onboarding overlay */}
       {phase === 'onboarding' && <Onboarding />}
 
-      {/* HUD */}
-      {showHUD && <HUD />}
+      {/* Screen overlays — rendered above map, below HUD */}
+      {showHUD && (
+        <AnimatePresence mode="wait">
+          {activeTab === 'surf' && <SurfScreen key="surf" />}
+          {activeTab === 'explore' && <ExploreScreen key="explore" />}
+          {activeTab === 'tasks' && <TasksScreen key="tasks" />}
+          {activeTab === 'profile' && <ProfileScreen key="profile" />}
+        </AnimatePresence>
+      )}
 
-      {/* Zone panel */}
-      {showHUD && <ZonePanel />}
+      {/* HUD — always on top */}
+      {showHUD && <HUD />}
     </div>
   );
 }

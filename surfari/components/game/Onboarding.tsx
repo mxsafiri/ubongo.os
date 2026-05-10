@@ -2,16 +2,17 @@
 
 import { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Waves } from 'lucide-react';
+import { Waves, AlertCircle } from 'lucide-react';
 import { useGameStore } from '@/store/game';
 import { randomPlayerColor, randomPattern, formatTokens } from '@/lib/utils';
 
-type Step = 'welcome' | 'handle' | 'tagging';
+type Step = 'welcome' | 'handle' | 'tagging' | 'error';
 
 export default function Onboarding() {
   const [step, setStep] = useState<Step>('welcome');
   const [handle, setHandle] = useState('');
   const [error, setError] = useState('');
+  const [apiError, setApiError] = useState('');
   const { setPlayer, setPhase } = useGameStore();
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -31,47 +32,69 @@ export default function Onboarding() {
     locateAndCreate(trimmed);
   }
 
-  function locateAndCreate(h: string) {
-    const fallback = { lat: -6.8160, lng: 39.2803 };
-
-    const create = (lat: number, lng: number) => {
-      const player = {
-        id: `player-${Date.now()}`,
+  async function createPlayer(h: string, lat: number, lng: number) {
+    const res = await fetch('/api/game/players', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
         handle: h,
         avatar_color: randomPlayerColor(),
         avatar_pattern: randomPattern(),
-        origin_zone_id: null,
-        tide_tokens: 100_000,
-        tier: 'surfari' as const,
-        reputation: 0,
-        zones_owned: 0,
-        assets_owned: 0,
-        traces_left: 0,
-        traces_received: 0,
-        created_at: new Date().toISOString(),
-        last_active: new Date().toISOString(),
         geo_lat: lat,
         geo_lng: lng,
-      };
-      setPlayer(player);
-      setTimeout(() => setPhase('exploring'), 2000);
-    };
+      }),
+    });
 
-    if (!navigator.geolocation) {
-      create(fallback.lat, fallback.lng);
+    if (!res.ok) {
+      const { error: msg } = await res.json().catch(() => ({ error: 'Unknown error' }));
+      setApiError(msg ?? 'Could not connect to the city. Try again.');
+      setStep('error');
       return;
     }
 
-    const timer = setTimeout(() => create(fallback.lat, fallback.lng), 5000);
+    const { player, returning } = await res.json();
+
+    setPlayer({
+      id: player.id,
+      handle: player.handle,
+      avatar_color: player.avatar_color,
+      avatar_pattern: player.avatar_pattern,
+      origin_zone_id: player.origin_zone_id ?? null,
+      tide_tokens: player.tide_tokens,
+      tier: player.tier,
+      reputation: player.reputation,
+      zones_owned: player.zones_owned,
+      assets_owned: player.assets_owned,
+      traces_left: player.traces_left,
+      traces_received: player.traces_received,
+      created_at: player.created_at,
+      last_active: player.last_active,
+      geo_lat: lat,
+      geo_lng: lng,
+    });
+
+    // Short delay so the tagging animation feels intentional
+    setTimeout(() => setPhase('exploring'), returning ? 800 : 1600);
+  }
+
+  function locateAndCreate(h: string) {
+    const fallback = { lat: -6.8160, lng: 39.2803 };
+
+    if (!navigator.geolocation) {
+      createPlayer(h, fallback.lat, fallback.lng);
+      return;
+    }
+
+    const timer = setTimeout(() => createPlayer(h, fallback.lat, fallback.lng), 5000);
 
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         clearTimeout(timer);
-        create(pos.coords.latitude, pos.coords.longitude);
+        createPlayer(h, pos.coords.latitude, pos.coords.longitude);
       },
       () => {
         clearTimeout(timer);
-        create(fallback.lat, fallback.lng);
+        createPlayer(h, fallback.lat, fallback.lng);
       },
       { timeout: 4500, maximumAge: 60000 }
     );
@@ -79,10 +102,10 @@ export default function Onboarding() {
 
   return (
     <div className="absolute inset-0 z-20 flex items-center justify-center">
-      {/* Dark overlay */}
+      {/* Backdrop */}
       <motion.div
         className="absolute inset-0"
-        style={{ background: 'rgba(6,8,16,0.85)', backdropFilter: 'blur(4px)' }}
+        style={{ background: 'rgba(244,247,255,0.88)', backdropFilter: 'blur(6px)' }}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
       />
@@ -97,41 +120,38 @@ export default function Onboarding() {
             exit={{ opacity: 0, y: -16 }}
             transition={{ duration: 0.4 }}
           >
-            <div className="flex items-center justify-center w-16 h-16 rounded-2xl"
-              style={{ background: 'rgba(0,194,255,0.12)', border: '1px solid rgba(0,194,255,0.3)' }}>
-              <Waves size={32} style={{ color: '#00C2FF' }} />
+            <div
+              className="flex items-center justify-center w-16 h-16 rounded-2xl"
+              style={{ background: 'rgba(0,153,194,0.1)', border: '1px solid rgba(0,153,194,0.25)' }}
+            >
+              <Waves size={32} style={{ color: 'var(--color-primary)' }} />
             </div>
 
             <div>
-              <h1
-                className="text-4xl font-bold tracking-tight"
-                style={{ fontFamily: 'var(--font-display)', color: 'var(--text-primary)' }}
-              >
+              <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '36px', color: 'var(--text-primary)', letterSpacing: '-0.03em' }}>
                 Surfari
               </h1>
-              <p className="mt-2 text-base" style={{ color: 'var(--text-secondary)' }}>
+              <p style={{ marginTop: '6px', fontSize: '15px', color: 'var(--text-secondary)' }}>
                 Own the city. Ride every zone.
               </p>
             </div>
 
             <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-muted)' }}>
-              <span
-                className="inline-block w-2 h-2 rounded-full animate-pulse"
-                style={{ background: '#00E096' }}
-              />
+              <span className="inline-block w-2 h-2 rounded-full animate-pulse" style={{ background: 'var(--color-success)' }} />
               The city is already moving
             </div>
 
             <motion.button
               onClick={handleEnter}
-              className="mt-2 px-8 py-3 rounded-xl text-sm font-semibold tracking-wide"
+              className="mt-2 px-8 py-3 rounded-xl text-sm font-semibold"
               style={{
-                background: 'linear-gradient(135deg, #00C2FF 0%, #7C5CFC 100%)',
-                color: '#F0F4FF',
-                fontFamily: 'var(--font-body)',
+                background: 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-accent) 100%)',
+                color: '#fff',
+                fontFamily: 'var(--font-display)',
+                letterSpacing: '0.01em',
+                boxShadow: '0 4px 16px rgba(0,153,194,0.25)',
               }}
               whileTap={{ scale: 0.97 }}
-              whileHover={{ opacity: 0.9 }}
             >
               Enter the City
             </motion.button>
@@ -147,21 +167,19 @@ export default function Onboarding() {
             exit={{ opacity: 0, y: -16 }}
             transition={{ duration: 0.4 }}
           >
-            <h2
-              className="text-2xl font-bold"
-              style={{ fontFamily: 'var(--font-display)', color: 'var(--text-primary)' }}
-            >
+            <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '24px', color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
               Claim your handle
             </h2>
 
             <div
               className="flex items-center gap-2 px-4 py-3 rounded-xl"
               style={{
-                background: 'rgba(17,24,39,0.8)',
-                border: '1px solid rgba(0,194,255,0.25)',
+                background: 'var(--surface-panel)',
+                border: '1px solid rgba(0,153,194,0.3)',
+                boxShadow: 'var(--shadow-card)',
               }}
             >
-              <span style={{ color: '#00C2FF', fontFamily: 'var(--font-mono)' }}>@</span>
+              <span style={{ color: 'var(--color-primary)', fontFamily: 'var(--font-mono)' }}>@</span>
               <input
                 ref={inputRef}
                 value={handle}
@@ -170,38 +188,35 @@ export default function Onboarding() {
                 placeholder="your_handle"
                 maxLength={20}
                 className="flex-1 bg-transparent outline-none text-base"
-                style={{
-                  color: 'var(--text-primary)',
-                  fontFamily: 'var(--font-mono)',
-                  caretColor: '#00C2FF',
-                }}
+                style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', caretColor: 'var(--color-primary)' }}
               />
             </div>
 
             {error && (
-              <p className="text-sm" style={{ color: '#FF4757' }}>{error}</p>
+              <p style={{ fontSize: '13px', color: 'var(--color-danger)' }}>{error}</p>
             )}
 
             <div
-              className="flex items-center justify-between px-4 py-3 rounded-xl text-sm"
-              style={{ background: 'rgba(255,184,0,0.08)', border: '1px solid rgba(255,184,0,0.2)' }}
+              className="flex items-center justify-between px-4 py-3 rounded-xl"
+              style={{ background: 'rgba(217,119,6,0.07)', border: '1px solid rgba(217,119,6,0.18)' }}
             >
-              <span style={{ color: 'var(--text-secondary)' }}>Starting capital</span>
-              <span style={{ color: '#FFB800', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
+              <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Starting capital</span>
+              <span style={{ color: 'var(--color-gold)', fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: '14px' }}>
                 {formatTokens(100_000)} Tide
               </span>
             </div>
 
             <motion.button
               onClick={handlePlantTag}
-              className="py-3 rounded-xl text-sm font-semibold tracking-wide"
+              className="py-3 rounded-xl text-sm font-semibold"
               style={{
                 background: handle.trim().length >= 2
-                  ? 'linear-gradient(135deg, #00C2FF 0%, #7C5CFC 100%)'
-                  : 'rgba(74,90,122,0.4)',
-                color: handle.trim().length >= 2 ? '#F0F4FF' : 'var(--text-muted)',
-                fontFamily: 'var(--font-body)',
-                transition: 'background 0.2s',
+                  ? 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-accent) 100%)'
+                  : 'var(--surface-subtle)',
+                color: handle.trim().length >= 2 ? '#fff' : 'var(--text-muted)',
+                fontFamily: 'var(--font-display)',
+                transition: 'all 0.2s',
+                boxShadow: handle.trim().length >= 2 ? '0 4px 16px rgba(0,153,194,0.25)' : 'none',
               }}
               whileTap={{ scale: 0.97 }}
             >
@@ -219,14 +234,45 @@ export default function Onboarding() {
             transition={{ duration: 0.4 }}
           >
             <motion.div
-              className="w-16 h-16 rounded-full"
-              style={{ background: 'rgba(0,194,255,0.15)', border: '2px solid #00C2FF' }}
+              className="w-16 h-16 rounded-full border-2"
+              style={{ borderColor: 'var(--color-primary)', background: 'rgba(0,153,194,0.1)' }}
               animate={{ scale: [1, 1.15, 1], opacity: [0.8, 1, 0.8] }}
               transition={{ duration: 1.4, repeat: Infinity }}
             />
-            <p className="text-base" style={{ color: 'var(--text-secondary)' }}>
+            <p style={{ fontSize: '15px', color: 'var(--text-secondary)' }}>
               Planting your tag in the city…
             </p>
+          </motion.div>
+        )}
+
+        {step === 'error' && (
+          <motion.div
+            key="error"
+            className="relative z-10 flex flex-col items-center gap-5 px-8 text-center"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.4 }}
+          >
+            <AlertCircle size={40} style={{ color: 'var(--color-danger)' }} />
+            <div>
+              <p style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: '18px', color: 'var(--text-primary)', marginBottom: '6px' }}>
+                Connection failed
+              </p>
+              <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{apiError}</p>
+            </div>
+            <button
+              onClick={() => { setStep('handle'); setApiError(''); }}
+              className="px-6 py-3 rounded-xl"
+              style={{
+                background: 'var(--surface-subtle)',
+                border: '1px solid var(--border-mid)',
+                color: 'var(--text-primary)',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '12px',
+              }}
+            >
+              TRY AGAIN
+            </button>
           </motion.div>
         )}
       </AnimatePresence>

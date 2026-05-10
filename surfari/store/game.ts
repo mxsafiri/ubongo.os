@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import type {
   GamePhase,
+  GameTab,
   PlayerCard,
   Zone,
   Challenge,
@@ -13,6 +14,7 @@ import { DEFAULT_VIEW } from '@/lib/map/style';
 interface GameStore {
   // State
   phase: GamePhase;
+  activeTab: GameTab;
   player: PlayerCard | null;
   nearby_players: PlayerCard[];
   nearby_zones: Zone[];
@@ -24,6 +26,7 @@ interface GameStore {
 
   // Actions
   setPhase: (phase: GamePhase) => void;
+  setActiveTab: (tab: GameTab) => void;
   setPlayer: (player: PlayerCard) => void;
   updateTokens: (amount: number) => void;
   setMapView: (view: Partial<MapViewState>) => void;
@@ -39,11 +42,14 @@ interface GameStore {
   addNotification: (notification: Omit<GameNotification, 'id' | 'timestamp' | 'read'>) => void;
   markNotificationRead: (id: string) => void;
   clearNotifications: () => void;
+  fetchZones: () => Promise<void>;
+  surfZone: (zoneId: string) => Promise<void>;
 }
 
 export const useGameStore = create<GameStore>()(
   subscribeWithSelector((set, get) => ({
     phase: 'loading',
+    activeTab: 'map',
     player: null,
     nearby_players: [],
     nearby_zones: [],
@@ -54,6 +60,8 @@ export const useGameStore = create<GameStore>()(
     mapLoaded: false,
 
     setPhase: (phase) => set({ phase }),
+
+    setActiveTab: (activeTab) => set({ activeTab }),
 
     setPlayer: (player) => set({ player }),
 
@@ -130,11 +138,48 @@ export const useGameStore = create<GameStore>()(
       })),
 
     clearNotifications: () => set({ notifications: [] }),
+
+    fetchZones: async () => {
+      try {
+        const res = await fetch('/api/game/zones');
+        if (!res.ok) return;
+        const { zones } = await res.json();
+        set({ nearby_zones: zones });
+      } catch (err) {
+        console.error('fetchZones', err);
+      }
+    },
+
+    surfZone: async (zoneId: string) => {
+      const { player } = get();
+      if (!player) return;
+      try {
+        const res = await fetch(`/api/game/zones/${zoneId}/surf`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ player_id: player.id }),
+        });
+        if (!res.ok) return;
+        const { zone: zoneUpdate, player: updatedPlayer } = await res.json();
+        set((state) => ({
+          player: updatedPlayer,
+          nearby_zones: state.nearby_zones.map((z) =>
+            z.id === zoneId ? { ...z, ...zoneUpdate } : z
+          ),
+          selected_zone: state.selected_zone?.id === zoneId
+            ? { ...state.selected_zone, ...zoneUpdate }
+            : state.selected_zone,
+        }));
+      } catch (err) {
+        console.error('surfZone', err);
+      }
+    },
   }))
 );
 
 // Selectors
 export const selectPhase = (s: GameStore) => s.phase;
+export const selectActiveTab = (s: GameStore) => s.activeTab;
 export const selectPlayer = (s: GameStore) => s.player;
 export const selectNearbyZones = (s: GameStore) => s.nearby_zones;
 export const selectSelectedZone = (s: GameStore) => s.selected_zone;

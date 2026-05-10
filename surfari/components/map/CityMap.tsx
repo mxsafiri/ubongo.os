@@ -1,11 +1,14 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { AnimatePresence } from 'framer-motion';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { useGameStore } from '@/store/game';
 import { DAR_ZONES, ZONE_TIER_COLORS, ZONE_STATE_COLORS } from '@/lib/game/zones';
 import { MAP_CONFIG } from '@/lib/map/style';
+import { ZonePopup } from '@/components/game/ZonePopup';
+import { selectActiveTab } from '@/store/game';
 
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!;
 
@@ -167,13 +170,16 @@ export default function CityMap() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const { mapView, nearby_players, setMapLoaded, setMapView, selectZone } = useGameStore();
+  const selected_zone = useGameStore((s) => s.selected_zone);
+  const activeTab = useGameStore(selectActiveTab);
+  const [popupPos, setPopupPos] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     if (mapRef.current || !mapContainer.current) return;
 
     const map = new mapboxgl.Map({
       container: mapContainer.current,
-      style: 'mapbox://styles/mapbox/dark-v11',
+      style: 'mapbox://styles/mapbox/light-v11',
       center: [mapView.longitude, mapView.latitude],
       zoom: mapView.zoom,
       pitch: mapView.pitch,
@@ -187,38 +193,31 @@ export default function CityMap() {
     mapRef.current = map;
 
     map.on('load', () => {
-      // Remap every land-related layer to the dark game palette
+      // Tune light-v11 to match the app's blue-white palette
       const setFill = (id: string, color: string) => {
         if (map.getLayer(id)) map.setPaintProperty(id, 'fill-color', color);
       };
       const setLine = (id: string, color: string) => {
         if (map.getLayer(id)) map.setPaintProperty(id, 'line-color', color);
       };
-      const setBg = (id: string, color: string) => {
-        if (map.getLayer(id)) map.setPaintProperty(id, 'background-color', color);
-      };
 
-      setBg('background', '#0A0E1A');
-      setBg('land', '#0D1320');
-      setFill('landcover', '#0D1320');
-      setFill('landcover-crop', '#0D1320');
-      setFill('landcover-grass', '#0D1320');
-      setFill('landcover-wood', '#0F1825');
-      setFill('national-park', '#0D1825');
-      setFill('landuse', '#0F1622');
-      setFill('landuse-residential', '#0F1622');
-      setFill('water', '#071525');
-      setFill('water-shadow', '#071525');
-      setLine('waterway', '#0A1D30');
-      setLine('waterway-shadow', '#0A1D30');
+      setFill('water', '#B8D4E8');
+      setFill('water-shadow', '#B8D4E8');
+      setLine('waterway', '#99BCD6');
+      setLine('waterway-shadow', '#99BCD6');
+      setFill('landcover-wood', '#C8DDB8');
+      setFill('national-park', '#C4DAB4');
 
       addZoneLayers(map);
 
-      // Zone click
+      // Zone click — prefer live store data (ownership), fall back to static
       map.on('click', 'zones-core', (e) => {
         if (!e.features?.[0]) return;
         const zoneId = e.features[0].properties?.id as string;
-        const zone = DAR_ZONES.find((z) => z.id === zoneId);
+        const storeZones = useGameStore.getState().nearby_zones;
+        const zone =
+          storeZones.find((z) => z.id === zoneId) ??
+          DAR_ZONES.find((z) => z.id === zoneId);
         if (zone) selectZone(zone);
       });
 
@@ -249,6 +248,38 @@ export default function CityMap() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Track selected zone screen position and fly camera to it
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+
+    if (!selected_zone) {
+      setPopupPos(null);
+      return;
+    }
+
+    map.flyTo({
+      center: [selected_zone.lng, selected_zone.lat],
+      zoom: Math.max(map.getZoom(), 14),
+      duration: 600,
+      essential: true,
+    });
+
+    const updatePos = () => {
+      const pt = map.project([selected_zone.lng, selected_zone.lat]);
+      setPopupPos({ x: Math.round(pt.x), y: Math.round(pt.y) });
+    };
+
+    updatePos();
+    map.on('move', updatePos);
+    map.on('zoom', updatePos);
+    return () => {
+      map.off('move', updatePos);
+      map.off('zoom', updatePos);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected_zone]);
+
   // Update real-players source when nearby_players changes
   useEffect(() => {
     const map = mapRef.current;
@@ -269,10 +300,20 @@ export default function CityMap() {
   }, [nearby_players]);
 
   return (
-    <div
-      ref={mapContainer}
-      className="absolute inset-0 w-full h-full"
-      style={{ background: '#060810' }}
-    />
+    <div className="absolute inset-0" style={{ background: 'var(--color-bg)' }}>
+      <div ref={mapContainer} className="absolute inset-0 w-full h-full" />
+      <AnimatePresence>
+        {selected_zone && popupPos && activeTab === 'map' && (
+          <ZonePopup
+            key={selected_zone.id}
+            zone={selected_zone}
+            x={popupPos.x}
+            y={popupPos.y}
+            onClose={() => selectZone(null)}
+            onSurf={() => selectZone(null)}
+          />
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
