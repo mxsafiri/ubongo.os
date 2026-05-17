@@ -3,9 +3,11 @@
 import dynamic from 'next/dynamic';
 import { useEffect } from 'react';
 import { AnimatePresence } from 'framer-motion';
-import { useGameStore, selectPhase, selectMapLoaded, selectActiveTab, selectPlayer } from '@/store/game';
+import { useGameStore, selectPhase, selectMapLoaded, selectActiveTab, selectPlayer, selectTheme } from '@/store/game';
 import Onboarding from '@/components/game/Onboarding';
 import HUD from '@/components/layout/HUD';
+import { CityChat } from '@/components/chat/CityChat';
+import { Toast } from '@/components/ui/Toast';
 import { SurfScreen } from '@/components/screens/SurfScreen';
 import { ExploreScreen } from '@/components/screens/ExploreScreen';
 import { TasksScreen } from '@/components/screens/TasksScreen';
@@ -18,6 +20,7 @@ export default function SurfariPage() {
   const mapLoaded = useGameStore(selectMapLoaded);
   const activeTab = useGameStore(selectActiveTab);
   const player = useGameStore(selectPlayer);
+  const theme = useGameStore(selectTheme);
   const setPhase = useGameStore((s) => s.setPhase);
   const fetchZones = useGameStore((s) => s.fetchZones);
 
@@ -33,6 +36,11 @@ export default function SurfariPage() {
   useEffect(() => {
     if (phase === 'exploring') fetchZones();
   }, [phase, fetchZones]);
+
+  // Sync theme class to document root
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+  }, [theme]);
 
   // Hard fallback — never stay stuck on loading for more than 5s
   useEffect(() => {
@@ -95,6 +103,12 @@ export default function SurfariPage() {
           {activeTab === 'profile' && <ProfileScreen key="profile" />}
         </AnimatePresence>
       )}
+
+      {/* Floating city chat — visible whenever HUD is up */}
+      {showHUD && <CityChat />}
+
+      {/* Toast notifications — above everything */}
+      {showHUD && <Toast />}
 
       {/* HUD — always on top */}
       {showHUD && <HUD />}

@@ -1,9 +1,11 @@
 'use client';
 
+import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { X, TrendingUp, Shield, Waves } from 'lucide-react';
+import { X, TrendingUp, Shield, MessageCircle, BarChart2, Waves } from 'lucide-react';
 import { ZONE_TIER_COLORS } from '@/lib/game/zones';
 import { formatTokens } from '@/lib/utils';
+import { ZoneChat } from '@/components/chat/ZoneChat';
 import type { Zone } from '@/types';
 
 const TIER_LABELS: Record<Zone['tier'], string> = {
@@ -26,6 +28,7 @@ interface ZonePopupProps {
 }
 
 export function ZonePopup({ zone, x, y, onClose, onSurf }: ZonePopupProps) {
+  const [tab, setTab] = useState<'info' | 'chat'>('info');
   const tierColor = ZONE_TIER_COLORS[zone.tier] ?? '#3D5470';
   const isClaimed = !!zone.owner_id;
 
@@ -38,19 +41,12 @@ export function ZonePopup({ zone, x, y, onClose, onSurf }: ZonePopupProps) {
     >
       <motion.div
         className="pointer-events-auto"
-        style={{
-          position: 'absolute',
-          bottom: 20,
-          left: '50%',
-          width: 280,
-          x: '-50%',
-        }}
+        style={{ position: 'absolute', bottom: 20, left: '50%', width: 292, x: '-50%' }}
         initial={{ opacity: 0, scale: 0.8, y: 8 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.85, y: 6 }}
         transition={{ type: 'spring', stiffness: 420, damping: 30 }}
       >
-        {/* Card body */}
         <div
           className="rounded-2xl overflow-hidden"
           style={{
@@ -60,21 +56,17 @@ export function ZonePopup({ zone, x, y, onClose, onSurf }: ZonePopupProps) {
             backdropFilter: 'blur(20px)',
           }}
         >
-          {/* Tier accent */}
+          {/* Tier accent bar */}
           <div style={{ height: 3, background: `linear-gradient(90deg, ${tierColor}, transparent)` }} />
 
           {/* Header */}
-          <div className="px-4 pt-3 pb-3">
-            <div className="flex items-start justify-between mb-2">
+          <div className="px-4 pt-3 pb-2">
+            <div className="flex items-start justify-between mb-1.5">
               <span
-                className="px-2 py-0.5 rounded-md text-xs font-semibold"
+                className="px-2 py-0.5 rounded-md"
                 style={{
-                  background: `${tierColor}14`,
-                  border: `1px solid ${tierColor}35`,
-                  color: tierColor,
-                  fontFamily: 'var(--font-mono)',
-                  letterSpacing: '0.08em',
-                  fontSize: '10px',
+                  background: `${tierColor}14`, border: `1px solid ${tierColor}35`, color: tierColor,
+                  fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.08em',
                 }}
               >
                 {TIER_LABELS[zone.tier].toUpperCase()}
@@ -87,15 +79,9 @@ export function ZonePopup({ zone, x, y, onClose, onSurf }: ZonePopupProps) {
                 <X size={11} style={{ color: 'var(--text-muted)' }} />
               </button>
             </div>
-
             <h3 style={{
-              fontFamily: 'var(--font-display)',
-              fontWeight: 700,
-              fontSize: '17px',
-              color: 'var(--text-primary)',
-              letterSpacing: '-0.02em',
-              lineHeight: 1.15,
-              marginBottom: 2,
+              fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '17px',
+              color: 'var(--text-primary)', letterSpacing: '-0.02em', lineHeight: 1.15, marginBottom: 2,
             }}>
               {zone.name}
             </h3>
@@ -104,37 +90,71 @@ export function ZonePopup({ zone, x, y, onClose, onSurf }: ZonePopupProps) {
             </p>
           </div>
 
-          {/* Accent line */}
-          <div style={{ height: 1, background: `linear-gradient(90deg, ${tierColor}35, transparent)`, margin: '0 16px' }} />
-
-          {/* Stats */}
-          <div className="grid grid-cols-2 gap-2 px-4 py-3">
-            <div className="flex items-center gap-2 px-2.5 py-2 rounded-xl"
-              style={{ background: 'var(--surface-subtle)', border: '1px solid var(--border-subtle)' }}>
-              <TrendingUp size={11} style={{ color: 'var(--color-gold)', flexShrink: 0 }} />
-              <div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)' }}>
-                  {formatTokens(zone.daily_yield)}
-                </div>
-                <div style={{ fontSize: '9px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em' }}>YIELD/DAY</div>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 px-2.5 py-2 rounded-xl"
-              style={{ background: 'var(--surface-subtle)', border: '1px solid var(--border-subtle)' }}>
-              <Shield size={11} style={{ color: 'var(--color-accent)', flexShrink: 0 }} />
-              <div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)' }}>
-                  {isClaimed ? `@${zone.owner_handle}` : 'Open'}
-                </div>
-                <div style={{ fontSize: '9px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em' }}>
-                  {isClaimed ? 'OWNER' : 'UNCLAIMED'}
-                </div>
-              </div>
-            </div>
+          {/* Tab switcher */}
+          <div className="flex mx-4 mb-2 gap-1 p-0.5 rounded-xl"
+            style={{ background: 'var(--surface-subtle)', border: '1px solid var(--border-subtle)' }}>
+            {([
+              ['info', <BarChart2 key="i" size={11} />, 'Info'],
+              ['chat', <MessageCircle key="c" size={11} />, 'Chat'],
+            ] as const).map(([t, icon, label]) => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg"
+                style={{
+                  background: tab === t ? 'var(--surface-card)' : 'transparent',
+                  boxShadow: tab === t ? 'var(--shadow-card)' : 'none',
+                  transition: 'all 0.18s',
+                }}
+              >
+                <span style={{ color: tab === t ? tierColor : 'var(--text-muted)' }}>{icon}</span>
+                <span style={{
+                  fontSize: '11px', fontFamily: 'var(--font-mono)', letterSpacing: '0.04em',
+                  color: tab === t ? 'var(--text-primary)' : 'var(--text-muted)',
+                  fontWeight: tab === t ? 600 : 400,
+                }}>
+                  {label}
+                </span>
+              </button>
+            ))}
           </div>
 
-          {/* CTA */}
+          {/* Tab content */}
+          {tab === 'info' ? (
+            <div className="grid grid-cols-2 gap-2 px-4 pb-3">
+              <StatTile icon={<TrendingUp size={11} />} label="YIELD/DAY" value={formatTokens(zone.daily_yield)} color="var(--color-gold)" />
+              <StatTile
+                icon={<Shield size={11} />}
+                label={isClaimed ? 'OWNER' : 'STATUS'}
+                value={isClaimed ? `@${zone.owner_handle}` : 'Open'}
+                color={isClaimed ? 'var(--color-accent)' : 'var(--text-secondary)'}
+              />
+              {isClaimed && (
+                <div className="col-span-2 px-2.5 py-2 rounded-xl"
+                  style={{ background: 'var(--surface-subtle)', border: '1px solid var(--border-subtle)' }}>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span style={{ fontSize: '9px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em' }}>CLAIM STRENGTH</span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{zone.claim_strength}%</span>
+                  </div>
+                  <div className="w-full h-1.5 rounded-full" style={{ background: 'var(--border-mid)' }}>
+                    <div className="h-full rounded-full" style={{
+                      width: `${zone.claim_strength}%`,
+                      background: zone.claim_strength >= 70 ? 'var(--color-success)' : zone.claim_strength >= 40 ? 'var(--color-warning)' : 'var(--color-danger)',
+                      transition: 'width 0.4s ease',
+                    }} />
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ height: 220 }}>
+              <ZoneChat zoneId={zone.id} />
+            </div>
+          )}
+
+          {/* CTA — always visible */}
           <div className="px-4 pb-4">
+            <div style={{ height: 1, background: 'var(--border-subtle)', marginBottom: 12 }} />
             <motion.button
               className="w-full flex items-center justify-center gap-2 rounded-xl relative overflow-hidden"
               style={{
@@ -150,22 +170,34 @@ export function ZonePopup({ zone, x, y, onClose, onSurf }: ZonePopupProps) {
                 style={{ background: 'linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.1) 50%, transparent 70%)' }} />
               <Waves size={13} style={{ color: '#fff' }} />
               <span style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: '13px', color: '#fff', letterSpacing: '0.02em' }}>
-                Surf This Zone
+                {isClaimed ? `Challenge @${zone.owner_handle}` : 'Claim This Zone'}
               </span>
             </motion.button>
           </div>
         </div>
 
-        {/* Pointer arrow */}
+        {/* Arrow */}
         <div className="flex justify-center" style={{ marginTop: -1 }}>
           <div style={{
             width: 0, height: 0,
-            borderLeft: '8px solid transparent',
-            borderRight: '8px solid transparent',
+            borderLeft: '8px solid transparent', borderRight: '8px solid transparent',
             borderTop: `8px solid ${tierColor}30`,
           }} />
         </div>
       </motion.div>
     </motion.div>
+  );
+}
+
+function StatTile({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: string; color: string }) {
+  return (
+    <div className="flex items-center gap-2 px-2.5 py-2 rounded-xl"
+      style={{ background: 'var(--surface-subtle)', border: '1px solid var(--border-subtle)' }}>
+      <span style={{ color, flexShrink: 0 }}>{icon}</span>
+      <div>
+        <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: '13px', color: 'var(--text-primary)' }}>{value}</div>
+        <div style={{ fontSize: '9px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em' }}>{label}</div>
+      </div>
+    </div>
   );
 }

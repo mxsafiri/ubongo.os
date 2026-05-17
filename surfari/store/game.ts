@@ -15,6 +15,7 @@ interface GameStore {
   // State
   phase: GamePhase;
   activeTab: GameTab;
+  theme: 'light' | 'dark';
   player: PlayerCard | null;
   nearby_players: PlayerCard[];
   nearby_zones: Zone[];
@@ -27,6 +28,7 @@ interface GameStore {
   // Actions
   setPhase: (phase: GamePhase) => void;
   setActiveTab: (tab: GameTab) => void;
+  toggleTheme: () => void;
   setPlayer: (player: PlayerCard) => void;
   updateTokens: (amount: number) => void;
   setMapView: (view: Partial<MapViewState>) => void;
@@ -50,6 +52,7 @@ export const useGameStore = create<GameStore>()(
   subscribeWithSelector((set, get) => ({
     phase: 'loading',
     activeTab: 'map',
+    theme: (typeof window !== 'undefined' && localStorage.getItem('surfari-theme') === 'dark') ? 'dark' : 'light',
     player: null,
     nearby_players: [],
     nearby_zones: [],
@@ -62,6 +65,12 @@ export const useGameStore = create<GameStore>()(
     setPhase: (phase) => set({ phase }),
 
     setActiveTab: (activeTab) => set({ activeTab }),
+
+    toggleTheme: () => set((state) => {
+      const next = state.theme === 'light' ? 'dark' : 'light';
+      if (typeof window !== 'undefined') localStorage.setItem('surfari-theme', next);
+      return { theme: next };
+    }),
 
     setPlayer: (player) => set({ player }),
 
@@ -190,3 +199,4 @@ export const selectUnreadCount = (s: GameStore) =>
   s.notifications.filter((n) => !n.read).length;
 export const selectMapView = (s: GameStore) => s.mapView;
 export const selectMapLoaded = (s: GameStore) => s.mapLoaded;
+export const selectTheme = (s: GameStore) => s.theme;
