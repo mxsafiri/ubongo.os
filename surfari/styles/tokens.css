@@ -2,9 +2,9 @@
 
 :root {
   /* ── Brand palette (same across themes) ── */
-  --color-primary:   #0099C2;  /* cyan — darkened for light bg legibility */
-  --color-secondary: #E85A20;  /* orange */
-  --color-accent:    #6D28D9;  /* purple */
+  --color-primary:   #0099C2;
+  --color-secondary: #E85A20;
+  --color-accent:    #6D28D9;
   --color-success:   #059669;
   --color-warning:   #D97706;
   --color-danger:    #DC2626;
@@ -28,8 +28,6 @@
   --text-secondary:  #4A6484;
   --text-muted:      #8BA3BE;
 
-  /* ── Component surface tokens ──
-     Use these instead of hardcoded rgba() in components */
   --surface-card:   rgba(255,255,255,0.98);
   --surface-panel:  rgba(255,255,255,0.97);
   --surface-row:    rgba(255,255,255,0.9);
@@ -39,7 +37,6 @@
   --shadow-card:    0 4px 24px rgba(10,20,40,0.10), 0 1px 4px rgba(10,20,40,0.06);
   --shadow-popup:   0 8px 40px rgba(10,20,40,0.14), 0 2px 8px rgba(10,20,40,0.08);
 
-  /* HUD bar backgrounds */
   --hud-top:    rgba(244,247,255,0.96);
   --hud-bottom: rgba(244,247,255,0.99);
 
@@ -57,4 +54,32 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left:   env(safe-area-inset-left, 0px);
   --safe-right:  env(safe-area-inset-right, 0px);
+}
+
+/* ── Dark theme ── */
+.dark {
+  --color-primary:   #00C2FF;
+  --color-gold:      #F59E0B;
+
+  --color-bg:        #0A0E1A;
+  --color-surface:   #111827;
+  --color-surface2:  #1A2236;
+  --color-border:    rgba(240,246,255,0.07);
+  --color-border-hi: rgba(240,246,255,0.14);
+
+  --text-primary:    #F0F6FF;
+  --text-secondary:  #8BA8CC;
+  --text-muted:      #4A6484;
+
+  --surface-card:   rgba(17,24,39,0.97);
+  --surface-panel:  rgba(17,24,39,0.96);
+  --surface-row:    rgba(26,34,54,0.95);
+  --surface-subtle: rgba(240,246,255,0.04);
+  --border-subtle:  rgba(240,246,255,0.06);
+  --border-mid:     rgba(240,246,255,0.10);
+  --shadow-card:    0 4px 24px rgba(0,0,0,0.40), 0 1px 4px rgba(0,0,0,0.25);
+  --shadow-popup:   0 8px 40px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.30);
+
+  --hud-top:    rgba(10,14,26,0.96);
+  --hud-bottom: rgba(10,14,26,0.99);
 }

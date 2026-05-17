@@ -178,6 +178,17 @@ export interface Stake {
   created_at: string;
 }
 
+export interface ChatMessage {
+  id: string;
+  zone_id: string | null;
+  player_id: string | null;
+  player_handle: string | null;
+  player_color: string | null;
+  content: string;
+  msg_type: 'user' | 'event';
+  created_at: string;
+}
+
 export interface GameState {
   phase: GamePhase;
   player: PlayerCard | null;

@@ -1,8 +1,8 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Waves, Bell, Map, Zap, ListChecks, User } from 'lucide-react';
-import { useGameStore, selectPlayer, selectUnreadCount, selectActiveTab } from '@/store/game';
+import { Waves, Bell, Map, Zap, ListChecks, User, Sun, Moon } from 'lucide-react';
+import { useGameStore, selectPlayer, selectUnreadCount, selectActiveTab, selectTheme } from '@/store/game';
 import { formatTokens } from '@/lib/utils';
 import type { GameTab } from '@/types';
 
@@ -10,7 +10,9 @@ export default function HUD() {
   const player = useGameStore(selectPlayer);
   const unread = useGameStore(selectUnreadCount);
   const activeTab = useGameStore(selectActiveTab);
+  const theme = useGameStore(selectTheme);
   const setActiveTab = useGameStore((s) => s.setActiveTab);
+  const toggleTheme = useGameStore((s) => s.toggleTheme);
 
   return (
     <>
@@ -67,24 +69,44 @@ export default function HUD() {
           />
         </div>
 
-        {/* Bell */}
-        <button
-          className="relative flex items-center justify-center w-8 h-8 rounded-full flex-shrink-0"
-          style={{
-            background: 'var(--surface-subtle)',
-            border: '1px solid var(--border-mid)',
-          }}
-        >
-          <Bell size={14} style={{ color: 'var(--text-secondary)' }} />
-          {unread > 0 && (
-            <span
-              className="absolute -top-0.5 -right-0.5 flex items-center justify-center w-4 h-4 rounded-full text-xs font-bold"
-              style={{ background: 'var(--color-danger)', color: '#fff', fontSize: '9px' }}
-            >
-              {unread > 9 ? '9+' : unread}
-            </span>
-          )}
-        </button>
+        {/* Right controls */}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {/* Theme toggle */}
+          <button
+            onClick={toggleTheme}
+            className="flex items-center justify-center w-8 h-8 rounded-full"
+            style={{
+              background: 'var(--surface-subtle)',
+              border: '1px solid var(--border-mid)',
+              transition: 'background 0.2s',
+            }}
+            aria-label="Toggle theme"
+          >
+            {theme === 'dark'
+              ? <Sun size={14} style={{ color: 'var(--color-gold)' }} />
+              : <Moon size={14} style={{ color: 'var(--text-secondary)' }} />
+            }
+          </button>
+
+          {/* Bell */}
+          <button
+            className="relative flex items-center justify-center w-8 h-8 rounded-full"
+            style={{
+              background: 'var(--surface-subtle)',
+              border: '1px solid var(--border-mid)',
+            }}
+          >
+            <Bell size={14} style={{ color: 'var(--text-secondary)' }} />
+            {unread > 0 && (
+              <span
+                className="absolute -top-0.5 -right-0.5 flex items-center justify-center w-4 h-4 rounded-full text-xs font-bold"
+                style={{ background: 'var(--color-danger)', color: '#fff', fontSize: '9px' }}
+              >
+                {unread > 9 ? '9+' : unread}
+              </span>
+            )}
+          </button>
+        </div>
       </motion.div>
 
       {/* ── Bottom nav ── */}
