@@ -214,11 +214,14 @@ export default function CityMap() {
       map.on('click', 'zones-core', (e) => {
         if (!e.features?.[0]) return;
         const zoneId = e.features[0].properties?.id as string;
-        const storeZones = useGameStore.getState().nearby_zones;
+        const state = useGameStore.getState();
         const zone =
-          storeZones.find((z) => z.id === zoneId) ??
+          state.nearby_zones.find((z) => z.id === zoneId) ??
           DAR_ZONES.find((z) => z.id === zoneId);
-        if (zone) selectZone(zone);
+        if (!zone) return;
+        state.selectZone(zone);
+        // On desktop, route to surf tab so the sidebar shows zone detail
+        if (window.innerWidth >= 1024) state.setActiveTab('surf');
       });
 
       map.on('mouseenter', 'zones-core', () => { map.getCanvas().style.cursor = 'pointer'; });
@@ -302,8 +305,9 @@ export default function CityMap() {
   return (
     <div className="absolute inset-0" style={{ background: 'var(--color-bg)' }}>
       <div ref={mapContainer} className="absolute inset-0 w-full h-full" />
+      {/* Floating popup — mobile only; desktop uses the sidebar */}
       <AnimatePresence>
-        {selected_zone && popupPos && activeTab === 'map' && (
+        {selected_zone && popupPos && activeTab === 'map' && typeof window !== 'undefined' && window.innerWidth < 1024 && (
           <ZonePopup
             key={selected_zone.id}
             zone={selected_zone}

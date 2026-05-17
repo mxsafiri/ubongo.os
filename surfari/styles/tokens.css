@@ -54,6 +54,16 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left:   env(safe-area-inset-left, 0px);
   --safe-right:  env(safe-area-inset-right, 0px);
+
+  /* Screen padding — overridden to 0 inside .desktop-panel */
+  --screen-pad-top:    calc(var(--safe-top) + 72px);
+  --screen-pad-bottom: calc(var(--safe-bottom) + 88px);
+}
+
+/* Desktop sidebar overrides — cascades into all child screens */
+.desktop-panel {
+  --screen-pad-top:    12px;
+  --screen-pad-bottom: 12px;
 }
 
 /* ── Dark theme ── */
