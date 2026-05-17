@@ -2,10 +2,11 @@
 
 import { motion, AnimatePresence } from 'framer-motion';
 import { Waves, MapPin, TrendingUp, Shield, X, Zap, AlertTriangle } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useGameStore, selectSelectedZone } from '@/store/game';
 import { ZONE_TIER_COLORS } from '@/lib/game/zones';
 import { formatTokens } from '@/lib/utils';
+import { WaveChallenge } from '@/components/game/WaveChallenge';
 
 const TIER_LABELS: Record<string, string> = {
   crown: 'Crown', jungle_deep: 'Jungle Deep', coral_ridge: 'Coral Ridge',
@@ -20,6 +21,15 @@ const slideUp = {
 };
 
 type Sheet = 'claim' | 'reinforce' | 'challenge' | null;
+// claim/challenge go through the mini-game; reinforce is direct
+type SheetPhase = 'game' | 'loading' | 'result';
+
+function getDifficulty(claimStrength: number, isClaimed: boolean): number {
+  if (!isClaimed) return 0.15;
+  if (claimStrength >= 70) return 0.9;
+  if (claimStrength >= 40) return 0.65;
+  return 0.45;
+}
 
 export function SurfScreen() {
   const zone = useGameStore(selectSelectedZone);
@@ -28,9 +38,100 @@ export function SurfScreen() {
   const surfZone = useGameStore((s) => s.surfZone);
   const addNotification = useGameStore((s) => s.addNotification);
   const player = useGameStore((s) => s.player);
+
   const [sheet, setSheet] = useState<Sheet>(null);
-  const [loading, setLoading] = useState(false);
+  const [sheetPhase, setSheetPhase] = useState<SheetPhase>('game');
   const [result, setResult] = useState<'win' | 'lose' | 'claimed' | 'reinforced' | null>(null);
+
+  function openSheet(s: Sheet) {
+    setSheet(s);
+    setSheetPhase(s === 'reinforce' ? 'result' : 'game'); // reinforce skips game
+    setResult(null);
+  }
+
+  function closeSheet() {
+    if (sheetPhase === 'loading') return;
+    setSheet(null);
+    setResult(null);
+  }
+
+  // Called by WaveChallenge on win — apply the zone change
+  const handleWin = useCallback(async () => {
+    if (!player || !zone) return;
+    setSheetPhase('loading');
+
+    const prevOwnerId = zone.owner_id;
+    await surfZone(zone.id);
+    const updatedZone = useGameStore.getState().selected_zone;
+    const nowOwned = updatedZone?.owner_id === player.id;
+
+    if (!prevOwnerId) {
+      // Claimed unclaimed zone
+      setResult('claimed');
+      addNotification({
+        type: 'zone_claimed',
+        title: `🏴 ${zone.name} is yours!`,
+        message: `+${formatTokens(zone.daily_yield)} Tide per day starting now.`,
+      });
+      postEvent(zone.id, player, `🏴 @${player.handle} claimed this zone`, null);
+      postEvent(null, player, `🏴 @${player.handle} just claimed ${zone.name}!`, null);
+    } else if (nowOwned) {
+      setResult('win');
+      addNotification({
+        type: 'zone_claimed',
+        title: `⚔️ Victory! ${zone.name} is yours`,
+        message: `You defeated @${zone.owner_handle} and claimed the zone.`,
+      });
+      postEvent(zone.id, player, `⚔️ @${player.handle} defeated @${zone.owner_handle} and seized this zone`, null);
+      postEvent(null, player, `⚔️ @${player.handle} just took ${zone.name} from @${zone.owner_handle}!`, null);
+    } else {
+      // Won the mini-game but API coin-flip still went against (e.g. high fortification)
+      setResult('lose');
+      addNotification({
+        type: 'zone_contested',
+        title: '⚔️ So close!',
+        message: `${zone.owner_handle} held their ground. Zone was too fortified.`,
+      });
+      postEvent(zone.id, player, `⚔️ @${player.handle} attacked but ${zone.name} held firm`, null);
+    }
+
+    setSheetPhase('result');
+    setTimeout(closeSheet, 2400);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player, zone]);
+
+  // Called by WaveChallenge on lose — no API call, zone unchanged
+  const handleLose = useCallback(() => {
+    if (!zone || !player) return;
+    setResult('lose');
+    setSheetPhase('result');
+    addNotification({
+      type: 'zone_contested',
+      title: zone.owner_id ? '💨 Challenge failed' : '💨 Missed your shot',
+      message: zone.owner_id
+        ? `${zone.owner_handle} held their ground. Try again.`
+        : `You couldn't lock the wave. The zone is still up for grabs.`,
+    });
+    setTimeout(closeSheet, 2200);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zone, player]);
+
+  // Reinforce — direct action, no game
+  const handleReinforce = useCallback(async () => {
+    if (!player || !zone) return;
+    setSheetPhase('loading');
+    await surfZone(zone.id);
+    const updatedZone = useGameStore.getState().selected_zone;
+    setResult('reinforced');
+    setSheetPhase('result');
+    addNotification({
+      type: 'zone_claimed',
+      title: 'Zone reinforced',
+      message: `${zone.name} strength is now ${updatedZone?.claim_strength ?? 0}%`,
+    });
+    setTimeout(closeSheet, 2000);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player, zone]);
 
   if (!zone) {
     return (
@@ -49,7 +150,7 @@ export function SurfScreen() {
               No zone selected
             </p>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
-              Open the map, tap any glowing zone dot, then come back here to start a challenge.
+              Open the map, tap any glowing zone dot, then come back here to surf it.
             </p>
           </div>
           <button
@@ -67,59 +168,7 @@ export function SurfScreen() {
   const tierColor = ZONE_TIER_COLORS[zone.tier] ?? '#3D5470';
   const isClaimed = !!zone.owner_id;
   const isOwn = !!(player && zone.owner_id === player.id);
-  const claimCost = 1_000;
-  const challengeCost = Math.max(500, Math.round(zone.daily_yield * 0.5));
-
-  const handleAction = async () => {
-    if (!player) return;
-    setLoading(true);
-    setResult(null);
-
-    const prevOwnerId = zone.owner_id;
-    await surfZone(zone.id);
-
-    const updatedZone = useGameStore.getState().selected_zone;
-    const nowOwned = updatedZone?.owner_id === player.id;
-
-    if (isOwn) {
-      setResult('reinforced');
-      addNotification({
-        type: 'zone_claimed',
-        title: 'Zone reinforced',
-        message: `${zone.name} strength is now ${updatedZone?.claim_strength ?? 0}%`,
-      });
-    } else if (!prevOwnerId) {
-      setResult('claimed');
-      addNotification({
-        type: 'zone_claimed',
-        title: `🏴 ${zone.name} is yours!`,
-        message: `+${formatTokens(zone.daily_yield)} Tide per day starting now.`,
-      });
-      postEvent(zone.id, player, `🏴 @${player.handle} claimed this zone`, null);
-      postEvent(null, player, `🏴 @${player.handle} just claimed ${zone.name}!`, null);
-    } else {
-      const won = nowOwned;
-      setResult(won ? 'win' : 'lose');
-      addNotification({
-        type: won ? 'zone_claimed' : 'zone_contested',
-        title: won ? `⚔️ Victory! ${zone.name} is yours` : '⚔️ Challenge failed',
-        message: won
-          ? `You defeated @${zone.owner_handle} and claimed the zone.`
-          : `@${zone.owner_handle} held their ground. Try again later.`,
-      });
-      const zoneMsg = won
-        ? `⚔️ @${player.handle} defeated @${zone.owner_handle} and seized this zone`
-        : `⚔️ @${player.handle} challenged @${zone.owner_handle} but was repelled`;
-      const cityMsg = won
-        ? `⚔️ @${player.handle} just took ${zone.name} from @${zone.owner_handle}!`
-        : `💨 @${player.handle} tried to take ${zone.name} from @${zone.owner_handle} — failed`;
-      postEvent(zone.id, player, zoneMsg, null);
-      postEvent(null, player, cityMsg, null);
-    }
-
-    setLoading(false);
-    setTimeout(() => { setSheet(null); setResult(null); }, 2200);
-  };
+  const difficulty = getDifficulty(zone.claim_strength ?? 0, isClaimed);
 
   return (
     <>
@@ -158,7 +207,7 @@ export function SurfScreen() {
                 <div className="w-full h-1.5 rounded-full" style={{ background: 'var(--border-mid)' }}>
                   <div className="h-full rounded-full" style={{
                     width: `${zone.claim_strength}%`,
-                    background: zone.claim_strength >= 70 ? 'var(--color-success)' : zone.claim_strength >= 40 ? 'var(--color-warning)' : 'var(--color-danger)',
+                    background: (zone.claim_strength ?? 0) >= 70 ? 'var(--color-success)' : (zone.claim_strength ?? 0) >= 40 ? 'var(--color-warning)' : 'var(--color-danger)',
                     transition: 'width 0.4s ease',
                   }} />
                 </div>
@@ -172,13 +221,13 @@ export function SurfScreen() {
                 style={{ padding: '14px 20px', background: 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-accent) 100%)', boxShadow: '0 4px 20px rgba(0,153,194,0.28)' }}
                 whileTap={{ scale: 0.975 }}
                 transition={{ duration: 0.12 }}
-                onClick={() => setSheet(isOwn ? 'reinforce' : isClaimed ? 'challenge' : 'claim')}
+                onClick={() => openSheet(isOwn ? 'reinforce' : isClaimed ? 'challenge' : 'claim')}
               >
                 <div className="absolute inset-0 pointer-events-none"
                   style={{ background: 'linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.1) 50%, transparent 70%)' }} />
                 {isClaimed && !isOwn ? <Zap size={15} style={{ color: '#fff' }} /> : <Waves size={15} style={{ color: '#fff' }} />}
                 <span style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: '14px', color: '#fff', letterSpacing: '0.02em' }}>
-                  {isOwn ? 'Reinforce Zone' : isClaimed ? `Challenge @${zone.owner_handle}` : 'Claim This Zone'}
+                  {isOwn ? 'Reinforce Zone' : isClaimed ? `Challenge @${zone.owner_handle}` : 'Surf This Zone'}
                 </span>
               </motion.button>
             )}
@@ -186,14 +235,14 @@ export function SurfScreen() {
         </div>
       </motion.div>
 
-      {/* ── Action sheets ── */}
+      {/* ── Action sheet ── */}
       <AnimatePresence>
         {sheet && (
           <>
             <motion.div className="absolute inset-0 z-[16]"
-              style={{ background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(6px)' }}
+              style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(6px)' }}
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              onClick={() => !loading && setSheet(null)} />
+              onClick={closeSheet} />
 
             <motion.div
               className="absolute left-4 right-4 z-[17] rounded-3xl overflow-hidden"
@@ -205,22 +254,22 @@ export function SurfScreen() {
             >
               <div style={{ height: 3, background: `linear-gradient(90deg, ${tierColor}, transparent)` }} />
               <div className="px-5 pt-5 pb-6 relative">
-                {!loading && !result && (
-                  <button onClick={() => setSheet(null)}
+                {sheetPhase !== 'loading' && sheetPhase !== 'result' && (
+                  <button onClick={closeSheet}
                     className="absolute top-4 right-4 w-7 h-7 rounded-full flex items-center justify-center"
                     style={{ background: 'var(--surface-subtle)', border: '1px solid var(--border-mid)' }}>
                     <X size={12} style={{ color: 'var(--text-muted)' }} />
                   </button>
                 )}
 
-                {result ? (
+                {/* ── Result outcome ── */}
+                {sheetPhase === 'result' && result && (
                   <div className="flex flex-col items-center gap-3 py-3">
                     <motion.span
                       style={{ fontSize: '52px' }}
                       initial={{ scale: 0.5, opacity: 0 }}
                       animate={{ scale: 1, opacity: 1 }}
-                      transition={{ type: 'spring', stiffness: 300, damping: 18 }}
-                    >
+                      transition={{ type: 'spring', stiffness: 300, damping: 18 }}>
                       {result === 'win' ? '🏆' : result === 'claimed' ? '🏴' : result === 'reinforced' ? '🛡️' : '💨'}
                     </motion.span>
                     <div className="text-center">
@@ -231,28 +280,25 @@ export function SurfScreen() {
                         {result === 'win' ? `${zone.name} is yours. +${formatTokens(zone.daily_yield)}/day`
                           : result === 'claimed' ? `You now earn ${formatTokens(zone.daily_yield)} Tide/day from ${zone.name}.`
                           : result === 'reinforced' ? `Claim strength increased to ${Math.min((zone.claim_strength ?? 0) + 10, 100)}%.`
-                          : `${zone.owner_handle} held their ground. Come back stronger.`}
+                          : zone.owner_id
+                            ? `${zone.owner_handle} held their ground. Come back stronger.`
+                            : `Couldn't lock the wave. Zone is still unclaimed — try again!`}
                       </p>
                     </div>
                   </div>
-                ) : sheet === 'claim' ? (
-                  <>
-                    <p style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '20px', color: 'var(--text-primary)', marginBottom: 4, paddingRight: 32 }}>
-                      Claim {zone.name}
-                    </p>
-                    <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: 20, lineHeight: 1.5 }}>
-                      Plant your tag and earn {formatTokens(zone.daily_yield)} Tide per day from this zone.
-                    </p>
-                    <div className="flex gap-2 mb-5">
-                      <InfoChip label="COST" value={`-${formatTokens(claimCost)} T`} color="var(--color-danger)" />
-                      <InfoChip label="YIELD/DAY" value={`+${formatTokens(zone.daily_yield)} T`} color="var(--color-success)" />
-                      <InfoChip label="TIER" value={TIER_LABELS[zone.tier]} color={tierColor} />
-                    </div>
-                    <ActionButton icon={<Waves size={15} style={{ color: '#fff' }} />} label="Plant My Flag"
-                      color="linear-gradient(135deg, var(--color-primary), var(--color-accent))"
-                      loading={loading} onClick={handleAction} />
-                  </>
-                ) : sheet === 'reinforce' ? (
+                )}
+
+                {/* ── Loading ── */}
+                {sheetPhase === 'loading' && (
+                  <div className="flex flex-col items-center gap-3 py-8">
+                    <div className="w-10 h-10 rounded-full border-2 animate-spin"
+                      style={{ borderColor: `${tierColor}30`, borderTopColor: tierColor }} />
+                    <p style={{ fontSize: '13px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>Recording…</p>
+                  </div>
+                )}
+
+                {/* ── Reinforce (no game) ── */}
+                {sheetPhase === 'game' && sheet === 'reinforce' && (
                   <>
                     <p style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '20px', color: 'var(--text-primary)', marginBottom: 4, paddingRight: 32 }}>
                       Reinforce {zone.name}
@@ -262,44 +308,68 @@ export function SurfScreen() {
                     </p>
                     <div className="flex gap-2 mb-5">
                       <InfoChip label="CURRENT" value={`${zone.claim_strength}%`} color="var(--color-primary)" />
-                      <InfoChip label="AFTER" value={`${Math.min(zone.claim_strength + 10, 100)}%`} color="var(--color-success)" />
+                      <InfoChip label="AFTER" value={`${Math.min((zone.claim_strength ?? 0) + 10, 100)}%`} color="var(--color-success)" />
                     </div>
                     <ActionButton icon={<Waves size={15} style={{ color: '#fff' }} />} label="Surf Your Zone"
                       color="linear-gradient(135deg, var(--color-primary), var(--color-accent))"
-                      loading={loading} onClick={handleAction} />
+                      loading={false} onClick={handleReinforce} />
                   </>
-                ) : (
+                )}
+
+                {/* ── Claim mini-game ── */}
+                {sheetPhase === 'game' && sheet === 'claim' && (
                   <>
-                    <p style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '20px', color: 'var(--text-primary)', marginBottom: 4, paddingRight: 32 }}>
-                      Challenge @{zone.owner_handle}
-                    </p>
-                    <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: 16, lineHeight: 1.5 }}>
-                      Outcome is decided by tier and claim strength. A fortified zone is much harder to take.
-                    </p>
-                    {/* VS card */}
-                    <div className="flex items-center gap-3 mb-4 px-3 py-3 rounded-2xl"
-                      style={{ background: 'var(--surface-subtle)', border: '1px solid var(--border-mid)' }}>
-                      <PlayerBadge handle={player?.handle ?? ''} color={player?.avatar_color} sub={player?.tier} />
-                      <div className="flex flex-col items-center gap-1">
-                        <Zap size={16} style={{ color: 'var(--color-secondary)' }} />
-                        <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>VS</span>
+                    <div className="flex items-center justify-between mb-4 pr-8">
+                      <div>
+                        <p style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '18px', color: 'var(--text-primary)' }}>
+                          Surf {zone.name}
+                        </p>
+                        <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: 2 }}>
+                          Lock the wave to claim it · {formatTokens(zone.daily_yield)} Tide/day
+                        </p>
                       </div>
-                      <PlayerBadge handle={zone.owner_handle ?? ''} color={zone.owner_color ?? tierColor} sub={`str: ${zone.claim_strength}%`} />
+                      <span className="px-2 py-1 rounded-lg"
+                        style={{ background: 'rgba(0,224,150,0.1)', border: '1px solid rgba(0,224,150,0.25)', fontSize: '11px', color: 'var(--color-success)', fontFamily: 'var(--font-mono)' }}>
+                        EASY
+                      </span>
                     </div>
-                    {zone.claim_strength >= 70 && (
-                      <div className="flex items-center gap-2 mb-4 px-3 py-2.5 rounded-xl"
+                    <WaveChallenge difficulty={difficulty} onWin={handleWin} onLose={handleLose} />
+                  </>
+                )}
+
+                {/* ── Challenge mini-game ── */}
+                {sheetPhase === 'game' && sheet === 'challenge' && (
+                  <>
+                    <div className="flex items-center justify-between mb-3 pr-8">
+                      <div>
+                        <p style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '18px', color: 'var(--text-primary)' }}>
+                          vs @{zone.owner_handle}
+                        </p>
+                        <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: 2 }}>
+                          Beat the wave to seize {zone.name}
+                        </p>
+                      </div>
+                      <span className="px-2 py-1 rounded-lg"
+                        style={{
+                          background: (zone.claim_strength ?? 0) >= 70 ? 'rgba(220,38,38,0.1)' : 'rgba(245,158,11,0.1)',
+                          border: `1px solid ${(zone.claim_strength ?? 0) >= 70 ? 'rgba(220,38,38,0.3)' : 'rgba(245,158,11,0.3)'}`,
+                          fontSize: '11px',
+                          color: (zone.claim_strength ?? 0) >= 70 ? 'var(--color-danger)' : 'var(--color-warning)',
+                          fontFamily: 'var(--font-mono)',
+                        }}>
+                        {(zone.claim_strength ?? 0) >= 70 ? 'HARD' : (zone.claim_strength ?? 0) >= 40 ? 'MEDIUM' : 'EASY'}
+                      </span>
+                    </div>
+                    {(zone.claim_strength ?? 0) >= 70 && (
+                      <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-xl"
                         style={{ background: 'rgba(220,38,38,0.07)', border: '1px solid rgba(220,38,38,0.18)' }}>
-                        <AlertTriangle size={13} style={{ color: 'var(--color-danger)', flexShrink: 0 }} />
-                        <p style={{ fontSize: '12px', color: 'var(--color-danger)' }}>Fortified — reduced win chance.</p>
+                        <AlertTriangle size={12} style={{ color: 'var(--color-danger)', flexShrink: 0 }} />
+                        <p style={{ fontSize: '12px', color: 'var(--color-danger)' }}>
+                          Fortified — the green zone is narrow. Precision wins.
+                        </p>
                       </div>
                     )}
-                    <div className="flex gap-2 mb-5">
-                      <InfoChip label="YOUR STAKE" value={`${formatTokens(challengeCost)} T`} color="var(--color-secondary)" />
-                      <InfoChip label="PRIZE" value={`${formatTokens(zone.daily_yield * 3)} T`} color="var(--color-gold)" />
-                    </div>
-                    <ActionButton icon={<Zap size={15} style={{ color: '#fff' }} />} label="Launch Challenge"
-                      color="linear-gradient(135deg, #E85A20, #DC2626)"
-                      loading={loading} onClick={handleAction} />
+                    <WaveChallenge difficulty={difficulty} onWin={handleWin} onLose={handleLose} />
                   </>
                 )}
               </div>
@@ -311,7 +381,7 @@ export function SurfScreen() {
   );
 }
 
-function postEvent(zoneId: string | null, player: { id: string; handle: string; avatar_color: string }, content: string, _unused: null) {
+function postEvent(zoneId: string | null, player: { id: string; handle: string; avatar_color: string }, content: string, _: null) {
   fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -354,19 +424,5 @@ function ActionButton({ icon, label, color, loading, onClick }: { icon: React.Re
         : <>{icon}<span style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: '14px', color: '#fff', letterSpacing: '0.02em' }}>{label}</span></>
       }
     </motion.button>
-  );
-}
-
-function PlayerBadge({ handle, color, sub }: { handle: string; color?: string | null; sub?: string }) {
-  return (
-    <div className="flex-1 flex flex-col items-center gap-1">
-      <div className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: color ?? 'var(--color-primary)' }}>
-        <span style={{ fontSize: '11px', color: '#fff', fontFamily: 'var(--font-mono)', fontWeight: 700 }}>
-          {(handle || '?')[0].toUpperCase()}
-        </span>
-      </div>
-      <p style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', fontWeight: 600 }}>@{handle}</p>
-      {sub && <p style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{sub}</p>}
-    </div>
   );
 }
