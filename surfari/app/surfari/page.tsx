@@ -28,32 +28,22 @@ export default function SurfariPage() {
   const fetchZones = useGameStore((s) => s.fetchZones);
   const isDesktop = useIsDesktop();
 
-  // Restore session from localStorage on first mount
+  // Restore session from localStorage on first mount (uses player_id — PIN not required)
   useEffect(() => {
     const saved = loadSavedPlayer();
-    if (!saved) return;
-    // Re-fetch from DB to get fresh token/zone data, then restore
+    if (!saved?.id) return;
     fetch('/api/game/players', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        handle: saved.handle,
-        avatar_color: saved.avatar_color,
-        avatar_pattern: saved.avatar_pattern,
-      }),
+      body: JSON.stringify({ player_id: saved.id }),
     })
       .then((r) => r.ok ? r.json() : null)
       .then((data) => {
         if (!data?.player) return;
-        setPlayer({
-          ...data.player,
-          geo_lat: null,
-          geo_lng: null,
-        });
-        // Skip onboarding — go straight to exploring when map is ready
+        setPlayer({ ...data.player, geo_lat: null, geo_lng: null });
         useGameStore.getState().setPhase('exploring');
       })
-      .catch(() => {/* silent — onboarding will show normally */});
+      .catch(() => {/* silent — onboarding shows normally */});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

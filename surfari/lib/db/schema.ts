@@ -18,10 +18,14 @@ export async function ensureSchema() {
       traces_received INTEGER DEFAULT 0,
       geo_lat DECIMAL(10,7),
       geo_lng DECIMAL(10,7),
+      pin_hash TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       last_active TIMESTAMPTZ DEFAULT NOW()
     )
   `;
+
+  // Add pin_hash to existing deployments that predate this column
+  await sql`ALTER TABLE players ADD COLUMN IF NOT EXISTS pin_hash TEXT`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS zones (
