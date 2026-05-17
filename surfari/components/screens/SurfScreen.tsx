@@ -36,7 +36,7 @@ export function SurfScreen() {
     return (
       <motion.div
         className="absolute inset-0 z-[15] flex flex-col items-center justify-center"
-        style={{ paddingTop: 'calc(var(--safe-top) + 72px)', paddingBottom: 'calc(var(--safe-bottom) + 88px)' }}
+        style={{ paddingTop: 'var(--screen-pad-top)', paddingBottom: 'var(--screen-pad-bottom)' }}
         {...slideUp}
       >
         <div className="flex flex-col items-center gap-5 px-8 text-center">
@@ -125,7 +125,7 @@ export function SurfScreen() {
     <>
       <motion.div
         className="absolute inset-0 z-[15] flex flex-col justify-end"
-        style={{ paddingBottom: 'calc(var(--safe-bottom) + 88px)' }}
+        style={{ paddingBottom: 'var(--screen-pad-bottom)' }}
         {...slideUp}
       >
         <div className="mx-4 rounded-3xl overflow-hidden"
@@ -197,7 +197,7 @@ export function SurfScreen() {
 
             <motion.div
               className="absolute left-4 right-4 z-[17] rounded-3xl overflow-hidden"
-              style={{ bottom: 'calc(var(--safe-bottom) + 100px)', background: 'var(--surface-card)', border: `1px solid ${tierColor}30`, boxShadow: 'var(--shadow-popup)' }}
+              style={{ bottom: 'calc(var(--screen-pad-bottom) + 12px)', background: 'var(--surface-card)', border: `1px solid ${tierColor}30`, boxShadow: 'var(--shadow-popup)' }}
               initial={{ opacity: 0, y: 40, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 30, scale: 0.97 }}
