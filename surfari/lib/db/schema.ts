@@ -46,6 +46,22 @@ export async function ensureSchema() {
     )
   `;
 
+  await sql`
+    CREATE TABLE IF NOT EXISTS messages (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      zone_id VARCHAR(100) REFERENCES zones(id) ON DELETE CASCADE,
+      player_id UUID REFERENCES players(id) ON DELETE SET NULL,
+      player_handle VARCHAR(50),
+      player_color VARCHAR(20),
+      content TEXT NOT NULL,
+      msg_type VARCHAR(20) DEFAULT 'user',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+
+  await sql`CREATE INDEX IF NOT EXISTS messages_zone_created ON messages(zone_id, created_at DESC)`;
+  await sql`CREATE INDEX IF NOT EXISTS messages_global_created ON messages(created_at DESC) WHERE zone_id IS NULL`;
+
   // Seed zones from static data if the table is empty
   const [{ count }] = await sql`SELECT COUNT(*)::int AS count FROM zones`;
   if (count === 0) {

@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Waves, AlertCircle } from 'lucide-react';
 import { useGameStore } from '@/store/game';
 import { randomPlayerColor, randomPattern, formatTokens } from '@/lib/utils';
+import { savePlayer } from '@/lib/storage';
 
 type Step = 'welcome' | 'handle' | 'tagging' | 'error';
 
@@ -54,7 +55,7 @@ export default function Onboarding() {
 
     const { player, returning } = await res.json();
 
-    setPlayer({
+    const playerCard = {
       id: player.id,
       handle: player.handle,
       avatar_color: player.avatar_color,
@@ -71,7 +72,10 @@ export default function Onboarding() {
       last_active: player.last_active,
       geo_lat: lat,
       geo_lng: lng,
-    });
+    };
+
+    setPlayer(playerCard);
+    savePlayer(playerCard);
 
     // Short delay so the tagging animation feels intentional
     setTimeout(() => setPhase('exploring'), returning ? 800 : 1600);

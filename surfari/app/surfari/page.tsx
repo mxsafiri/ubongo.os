@@ -3,9 +3,14 @@
 import dynamic from 'next/dynamic';
 import { useEffect } from 'react';
 import { AnimatePresence } from 'framer-motion';
-import { useGameStore, selectPhase, selectMapLoaded, selectActiveTab, selectPlayer } from '@/store/game';
+import { useGameStore, selectPhase, selectMapLoaded, selectActiveTab, selectTheme } from '@/store/game';
+import { loadSavedPlayer } from '@/lib/storage';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
 import Onboarding from '@/components/game/Onboarding';
 import HUD from '@/components/layout/HUD';
+import { DesktopSidebar } from '@/components/layout/DesktopSidebar';
+import { CityChat } from '@/components/chat/CityChat';
+import { Toast } from '@/components/ui/Toast';
 import { SurfScreen } from '@/components/screens/SurfScreen';
 import { ExploreScreen } from '@/components/screens/ExploreScreen';
 import { TasksScreen } from '@/components/screens/TasksScreen';
@@ -17,11 +22,42 @@ export default function SurfariPage() {
   const phase = useGameStore(selectPhase);
   const mapLoaded = useGameStore(selectMapLoaded);
   const activeTab = useGameStore(selectActiveTab);
-  const player = useGameStore(selectPlayer);
+  const theme = useGameStore(selectTheme);
   const setPhase = useGameStore((s) => s.setPhase);
+  const setPlayer = useGameStore((s) => s.setPlayer);
   const fetchZones = useGameStore((s) => s.fetchZones);
+  const isDesktop = useIsDesktop();
 
-  // Advance when map loads
+  // Restore session from localStorage on first mount
+  useEffect(() => {
+    const saved = loadSavedPlayer();
+    if (!saved) return;
+    // Re-fetch from DB to get fresh token/zone data, then restore
+    fetch('/api/game/players', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        handle: saved.handle,
+        avatar_color: saved.avatar_color,
+        avatar_pattern: saved.avatar_pattern,
+      }),
+    })
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data?.player) return;
+        setPlayer({
+          ...data.player,
+          geo_lat: null,
+          geo_lng: null,
+        });
+        // Skip onboarding — go straight to exploring when map is ready
+        useGameStore.getState().setPhase('exploring');
+      })
+      .catch(() => {/* silent — onboarding will show normally */});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Advance when map loads (only if not already restored)
   useEffect(() => {
     if (mapLoaded && phase === 'loading') {
       const t = setTimeout(() => setPhase('onboarding'), 800);
@@ -34,7 +70,12 @@ export default function SurfariPage() {
     if (phase === 'exploring') fetchZones();
   }, [phase, fetchZones]);
 
-  // Hard fallback — never stay stuck on loading for more than 5s
+  // Sync theme class to document root
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+  }, [theme]);
+
+  // Hard fallback — never stuck on loading > 5s
   useEffect(() => {
     if (phase !== 'loading') return;
     const t = setTimeout(() => setPhase('onboarding'), 5000);
@@ -42,11 +83,43 @@ export default function SurfariPage() {
   }, [phase, setPhase]);
 
   const showHUD = phase === 'exploring' || phase === 'surfing' || phase === 'challenge' || phase === 'result';
-  const mapActive = activeTab === 'map' || activeTab === 'explore';
+  const mapActive = !isDesktop && (activeTab === 'map' || activeTab === 'explore');
 
+  /* ── Desktop layout ── */
+  if (isDesktop) {
+    return (
+      <div className="surfari-root flex flex-row overflow-hidden">
+        {/* Map — full left side, always at 100% */}
+        <div className="flex-1 relative">
+          <CityMap />
+          {/* Atmosphere */}
+          <div className="absolute inset-0 pointer-events-none"
+            style={{
+              background: `
+                radial-gradient(ellipse 50% 35% at 10% 90%, rgba(0,153,194,0.05) 0%, transparent 70%),
+                radial-gradient(ellipse 40% 30% at 90% 10%, rgba(109,40,217,0.04) 0%, transparent 70%)
+              `,
+            }}
+          />
+          {phase === 'loading' && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-full border-2 animate-spin"
+                style={{ borderColor: 'rgba(0,194,255,0.2)', borderTopColor: '#00C2FF' }} />
+            </div>
+          )}
+          {phase === 'onboarding' && <Onboarding />}
+          <Toast />
+        </div>
+
+        {/* Right sidebar */}
+        {showHUD && <DesktopSidebar />}
+      </div>
+    );
+  }
+
+  /* ── Mobile layout (unchanged) ── */
   return (
     <div className="surfari-root">
-      {/* Map — always mounted, dimmed when a content screen is active */}
       <div
         className="absolute inset-0"
         style={{
@@ -59,9 +132,7 @@ export default function SurfariPage() {
         <CityMap />
       </div>
 
-      {/* Atmosphere vignette — subtle brand tinting on corners */}
-      <div
-        className="absolute inset-0 pointer-events-none z-[1]"
+      <div className="absolute inset-0 pointer-events-none z-[1]"
         style={{
           background: `
             radial-gradient(ellipse 50% 35% at 10% 90%, rgba(0,153,194,0.05) 0%, transparent 70%),
@@ -70,33 +141,26 @@ export default function SurfariPage() {
         }}
       />
 
-      {/* Loading spinner */}
       {phase === 'loading' && (
         <div className="absolute inset-0 z-10 flex items-center justify-center">
-          <div
-            className="w-10 h-10 rounded-full border-2 animate-spin"
-            style={{
-              borderColor: 'rgba(0,194,255,0.2)',
-              borderTopColor: '#00C2FF',
-            }}
-          />
+          <div className="w-10 h-10 rounded-full border-2 animate-spin"
+            style={{ borderColor: 'rgba(0,194,255,0.2)', borderTopColor: '#00C2FF' }} />
         </div>
       )}
 
-      {/* Onboarding overlay */}
       {phase === 'onboarding' && <Onboarding />}
 
-      {/* Screen overlays — rendered above map, below HUD */}
       {showHUD && (
         <AnimatePresence mode="wait">
-          {activeTab === 'surf' && <SurfScreen key="surf" />}
+          {activeTab === 'surf'    && <SurfScreen key="surf" />}
           {activeTab === 'explore' && <ExploreScreen key="explore" />}
-          {activeTab === 'tasks' && <TasksScreen key="tasks" />}
+          {activeTab === 'tasks'   && <TasksScreen key="tasks" />}
           {activeTab === 'profile' && <ProfileScreen key="profile" />}
         </AnimatePresence>
       )}
 
-      {/* HUD — always on top */}
+      {showHUD && <CityChat />}
+      {showHUD && <Toast />}
       {showHUD && <HUD />}
     </div>
   );

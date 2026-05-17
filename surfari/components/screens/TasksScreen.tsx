@@ -23,7 +23,7 @@ export function TasksScreen() {
   return (
     <motion.div
       className="absolute inset-0 z-[15] flex flex-col"
-      style={{ paddingTop: 'calc(var(--safe-top) + 72px)', paddingBottom: 'calc(var(--safe-bottom) + 88px)' }}
+      style={{ paddingTop: 'var(--screen-pad-top)', paddingBottom: 'var(--screen-pad-bottom)' }}
       initial={{ opacity: 0, x: 24 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 24 }}
