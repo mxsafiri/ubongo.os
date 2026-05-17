@@ -48,8 +48,9 @@ export function ZoneChat({ zoneId }: { zoneId?: string }) {
     const body = text.trim();
     setSending(true);
     setText('');
+    const tmpId = `tmp-${Date.now()}`;
     const optimistic: ChatMessage = {
-      id: `tmp-${Date.now()}`,
+      id: tmpId,
       zone_id: zoneId ?? null,
       player_id: player.id,
       player_handle: player.handle,
@@ -59,7 +60,7 @@ export function ZoneChat({ zoneId }: { zoneId?: string }) {
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimistic]);
-    await fetch('/api/chat', {
+    const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -70,6 +71,11 @@ export function ZoneChat({ zoneId }: { zoneId?: string }) {
         content: body,
       }),
     });
+    if (res.ok) {
+      const { message: real } = await res.json();
+      setMessages((prev) => prev.map((m) => m.id === tmpId ? real : m));
+      lastCreatedAt.current = real.created_at;
+    }
     setSending(false);
   };
 
