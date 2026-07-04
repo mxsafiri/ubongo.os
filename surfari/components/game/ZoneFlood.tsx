@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { sfx } from '@/lib/game/sfx';
 
 const GRID_N = 6;
 const COLORS = ['#0099c2', '#00c878', '#f59e0b', '#ef4444', '#9333ea'] as const;
@@ -101,8 +102,10 @@ export function ZoneFlood({ difficulty, onWin, onLose }: {
     if (pT.size + aT.size >= total || turns <= 0) {
       setPhase('done');
       if (pT.size > aT.size) {
+        sfx.win();
         setTimeout(onWin, 600);
       } else {
+        sfx.lose();
         setTimeout(onLose, 600);
       }
       return true;
@@ -120,6 +123,7 @@ export function ZoneFlood({ difficulty, onWin, onLose }: {
           setAiT((aT) => {
             const color = aiPickColor(prevGrid, aT, pT, difficulty);
             const newAiT = bfsFlood(prevGrid, aT, color);
+            sfx.aiMove();
 
             // Repaint grid for AI territory
             const newGrid = [...prevGrid];
@@ -147,6 +151,7 @@ export function ZoneFlood({ difficulty, onWin, onLose }: {
 
   const pickColor = useCallback((colorIdx: number) => {
     if (!isPlayerTurn || phase !== 'playing') return;
+    sfx.pop();
 
     setGrid((prevGrid) => {
       setPlayerT((pT) => {
@@ -222,7 +227,8 @@ export function ZoneFlood({ difficulty, onWin, onLose }: {
 
           return (
             <motion.div
-              key={i}
+              // Ownership flip remounts the cell so capture pops in visually
+              key={`${i}-${isPlayer ? 'p' : isAi ? 'a' : 'n'}`}
               className="relative"
               style={{
                 aspectRatio: '1',
@@ -234,7 +240,9 @@ export function ZoneFlood({ difficulty, onWin, onLose }: {
                   : 'none',
                 outlineOffset: '-2px',
               }}
-              animate={{ opacity: 1 }}
+              initial={{ scale: isPlayer || isAi ? 0.55 : 1, opacity: isPlayer || isAi ? 0.4 : 1 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ type: 'spring', stiffness: 480, damping: 26 }}
             >
               {isPlayer && (
                 <div className="absolute inset-0 flex items-center justify-center" style={{ fontSize: '9px', color: 'rgba(255,255,255,0.8)', fontWeight: 700 }}>

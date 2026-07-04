@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { sfx } from '@/lib/game/sfx';
+import { Shaker } from './juice';
 
 const PADS = [
   { id: 0, label: 'KALI', emoji: '🔵', color: '#0099c2', glow: 'rgba(0,153,194,0.7)' },
@@ -49,6 +51,7 @@ export function FrequencyDuel({ difficulty, onWin, onLose }: {
   const [echoIdx, setEchoIdx] = useState(0);                    // how many pads player has echoed
   const [roundWin, setRoundWin] = useState<boolean | null>(null);
   const [wrongPad, setWrongPad] = useState<number | null>(null);
+  const [shake, setShake] = useState(0);
 
   const echoIdxRef = useRef(0);
   const seqRef = useRef<number[]>([]);
@@ -58,6 +61,7 @@ export function FrequencyDuel({ difficulty, onWin, onLose }: {
   // Countdown tick
   useEffect(() => {
     if (phase !== 'countdown') return;
+    sfx.countdown(countdown);
     if (countdown <= 0) {
       const s = makeSeq(cfg.seqLen);
       setSeq(s);
@@ -86,6 +90,7 @@ export function FrequencyDuel({ difficulty, onWin, onLose }: {
         return;
       }
       setLitPad(seqRef.current[i]);
+      sfx.pad(seqRef.current[i]);
       setTimeout(() => {
         if (cancelled) return;
         setLitPad(null);
@@ -107,6 +112,8 @@ export function FrequencyDuel({ difficulty, onWin, onLose }: {
 
     if (padId !== expected) {
       // Wrong pad — round lost
+      sfx.wrong();
+      setShake((s) => s + 1);
       setWrongPad(padId);
       setLitPad(expected); // show correct
       setRoundWin(false);
@@ -114,6 +121,7 @@ export function FrequencyDuel({ difficulty, onWin, onLose }: {
       return;
     }
 
+    sfx.pad(padId);
     setLitPad(padId);
     setTimeout(() => setLitPad(null), 200);
 
@@ -123,6 +131,7 @@ export function FrequencyDuel({ difficulty, onWin, onLose }: {
 
     if (next >= seqRef.current.length) {
       // Completed sequence — round won
+      sfx.roundWin();
       setRoundWin(true);
       setPhase('round-result');
     }
@@ -137,9 +146,11 @@ export function FrequencyDuel({ difficulty, onWin, onLose }: {
       const canStillWin = newWins < WINS_NEEDED && remaining >= WINS_NEEDED - newWins;
 
       if (newWins >= WINS_NEEDED) {
+        sfx.win();
         setPhase('done');
         setTimeout(onWin, 400);
       } else if (round >= ROUNDS || !canStillWin) {
+        sfx.lose();
         setPhase('done');
         setTimeout(onLose, 400);
       } else {
@@ -220,6 +231,7 @@ export function FrequencyDuel({ difficulty, onWin, onLose }: {
             </span>
           </motion.div>
         ) : (
+          <Shaker key="pads-shaker" trigger={shake}>
           <motion.div
             key="pads"
             className="grid gap-3 w-full"
@@ -273,6 +285,7 @@ export function FrequencyDuel({ difficulty, onWin, onLose }: {
               );
             })}
           </motion.div>
+          </Shaker>
         )}
       </AnimatePresence>
 

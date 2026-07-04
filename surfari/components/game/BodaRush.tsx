@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { sfx } from '@/lib/game/sfx';
+import { Shaker } from './juice';
 
 const GAME_H = 280;     // px — visible play area
 const PLAYER_Y = 230;   // px from top — player row
@@ -46,6 +48,8 @@ export function BodaRush({ difficulty, onWin, onLose }: {
   const [playerLane, setPlayerLane] = useState(1);
   const [lives, setLives] = useState(cfg.lives);
   const [timeLeft, setTimeLeft] = useState(cfg.timeLimit);
+  const [shake, setShake] = useState(0);
+  const [damageFlash, setDamageFlash] = useState(0);
 
   const playingRef = useRef(false);
   const playerLaneRef = useRef(1);
@@ -57,6 +61,7 @@ export function BodaRush({ difficulty, onWin, onLose }: {
     if (!playingRef.current) return;
     setPlayerLane((prev) => {
       const next = Math.max(0, Math.min(LANES - 1, prev + dir));
+      if (next !== prev) sfx.whoosh();
       playerLaneRef.current = next;
       return next;
     });
@@ -74,6 +79,7 @@ export function BodaRush({ difficulty, onWin, onLose }: {
   // Countdown
   useEffect(() => {
     if (phase !== 'countdown') return;
+    sfx.countdown(countdown);
     if (countdown <= 0) { setPhase('playing'); return; }
     const t = setTimeout(() => setCountdown((c) => c - 1), countdown === 3 ? 600 : 850);
     return () => clearTimeout(t);
@@ -84,6 +90,7 @@ export function BodaRush({ difficulty, onWin, onLose }: {
     if (phase !== 'playing') return;
     if (timeLeft <= 0) {
       playingRef.current = false;
+      sfx.win();
       setPhase('done');
       setTimeout(onWin, 500);
       return;
@@ -121,8 +128,12 @@ export function BodaRush({ difficulty, onWin, onLose }: {
         if (hitThisTick) {
           livesRef.current--;
           setLives(livesRef.current);
+          sfx.crash();
+          setShake((s) => s + 1);
+          setDamageFlash((f) => f + 1);
           if (livesRef.current <= 0) {
             playingRef.current = false;
+            sfx.lose();
             setPhase('done');
             setTimeout(onLose, 500);
           }
@@ -186,6 +197,7 @@ export function BodaRush({ difficulty, onWin, onLose }: {
             </span>
           </motion.div>
         ) : (
+          <Shaker key="road-shaker" trigger={shake}>
           <motion.div
             key="road"
             className="relative w-full rounded-2xl overflow-hidden select-none"
@@ -258,7 +270,23 @@ export function BodaRush({ difficulty, onWin, onLose }: {
                 <span style={{ fontSize: '18px' }}>▶</span>
               </div>
             </div>
+
+            {/* Damage flash — red vignette that replays on every hit */}
+            <AnimatePresence>
+              {damageFlash > 0 && (
+                <motion.div
+                  key={damageFlash}
+                  className="absolute inset-0 pointer-events-none"
+                  style={{ background: 'radial-gradient(circle, transparent 35%, rgba(239,68,68,0.5) 100%)' }}
+                  initial={{ opacity: 1 }}
+                  animate={{ opacity: 0 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.55 }}
+                />
+              )}
+            </AnimatePresence>
           </motion.div>
+          </Shaker>
         )}
       </AnimatePresence>
 
