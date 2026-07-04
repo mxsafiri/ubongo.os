@@ -50,7 +50,7 @@ export function GameArena({ zoneName, difficulty, onWin, onLose, onAbort }: {
     <AnimatePresence>
       <motion.div
         className="fixed inset-0 z-[60] flex flex-col"
-        style={{ background: 'var(--surface-base)', backdropFilter: 'blur(8px)' }}
+        style={{ background: 'rgba(7,10,18,0.82)', backdropFilter: 'blur(14px) saturate(1.2)' }}
         initial={{ opacity: 0, y: 40 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: 30 }}
