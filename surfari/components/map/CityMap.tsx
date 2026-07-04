@@ -12,6 +12,27 @@ import { selectActiveTab } from '@/store/game';
 
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!;
 
+// Beam height per tier — crown zones tower over the city
+const TIER_BEAM_HEIGHT: Record<string, number> = {
+  crown: 900,
+  jungle_deep: 700,
+  coral_ridge: 600,
+  savanna: 500,
+  shoreline: 420,
+};
+
+// Generate a circle polygon (meters → degrees) for extrusion layers
+function circleCoords(lng: number, lat: number, radiusM: number, points = 40): number[][] {
+  const dx = radiusM / (111320 * Math.cos((lat * Math.PI) / 180));
+  const dy = radiusM / 110574;
+  const coords: number[][] = [];
+  for (let i = 0; i <= points; i++) {
+    const theta = (i / points) * 2 * Math.PI;
+    coords.push([lng + dx * Math.cos(theta), lat + dy * Math.sin(theta)]);
+  }
+  return coords;
+}
+
 function buildZonesGeoJSON(zones: typeof DAR_ZONES): GeoJSON.FeatureCollection {
   return {
     type: 'FeatureCollection',
@@ -27,6 +48,39 @@ function buildZonesGeoJSON(zones: typeof DAR_ZONES): GeoJSON.FeatureCollection {
         tierColor: ZONE_TIER_COLORS[z.tier] ?? '#4A5A7A',
         stateColor: ZONE_STATE_COLORS[z.state] ?? '#4A5A7A',
         radius: z.radius_meters,
+      },
+    })),
+  };
+}
+
+// Volumetric light beams — thin glowing pillars rising from each zone core
+function buildBeamsGeoJSON(zones: typeof DAR_ZONES): GeoJSON.FeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: zones.map((z) => ({
+      type: 'Feature',
+      id: `beam-${z.id}`,
+      geometry: { type: 'Polygon', coordinates: [circleCoords(z.lng, z.lat, 26, 24)] },
+      properties: {
+        id: z.id,
+        tierColor: ZONE_TIER_COLORS[z.tier] ?? '#4A5A7A',
+        beamHeight: TIER_BEAM_HEIGHT[z.tier] ?? 450,
+      },
+    })),
+  };
+}
+
+// Territory domes — low translucent discs covering the zone's actual radius
+function buildTerritoryGeoJSON(zones: typeof DAR_ZONES): GeoJSON.FeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: zones.map((z) => ({
+      type: 'Feature',
+      id: `territory-${z.id}`,
+      geometry: { type: 'Polygon', coordinates: [circleCoords(z.lng, z.lat, z.radius_meters)] },
+      properties: {
+        id: z.id,
+        tierColor: ZONE_TIER_COLORS[z.tier] ?? '#4A5A7A',
       },
     })),
   };
@@ -54,10 +108,42 @@ function buildAmbientPlayers(): GeoJSON.FeatureCollection {
 
 function addZoneLayers(map: mapboxgl.Map) {
   map.addSource('zones', { type: 'geojson', data: buildZonesGeoJSON(DAR_ZONES) });
+  map.addSource('zone-beams', { type: 'geojson', data: buildBeamsGeoJSON(DAR_ZONES) });
+  map.addSource('zone-territory', { type: 'geojson', data: buildTerritoryGeoJSON(DAR_ZONES) });
   map.addSource('ambient-players', { type: 'geojson', data: buildAmbientPlayers() });
   map.addSource('real-players', {
     type: 'geojson',
     data: { type: 'FeatureCollection', features: [] },
+  });
+
+  // Territory dome — translucent disc over the zone's real radius, depth-sorted with buildings
+  map.addLayer({
+    id: 'zones-territory',
+    type: 'fill-extrusion',
+    source: 'zone-territory',
+    slot: 'middle',
+    paint: {
+      'fill-extrusion-color': ['get', 'tierColor'],
+      'fill-extrusion-height': 22,
+      'fill-extrusion-base': 0,
+      'fill-extrusion-opacity': 0.16,
+      'fill-extrusion-emissive-strength': 0.7,
+    },
+  });
+
+  // Volumetric light beam — the zone beacon, visible across the whole city
+  map.addLayer({
+    id: 'zones-beam',
+    type: 'fill-extrusion',
+    source: 'zone-beams',
+    slot: 'middle',
+    paint: {
+      'fill-extrusion-color': ['get', 'tierColor'],
+      'fill-extrusion-height': ['get', 'beamHeight'],
+      'fill-extrusion-base': 0,
+      'fill-extrusion-opacity': 0.45,
+      'fill-extrusion-emissive-strength': 1.4,
+    },
   });
 
   // Outer glow halo
@@ -65,11 +151,13 @@ function addZoneLayers(map: mapboxgl.Map) {
     id: 'zones-halo',
     type: 'circle',
     source: 'zones',
+    slot: 'top',
     paint: {
       'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 20, 15, 52],
       'circle-color': ['get', 'tierColor'],
-      'circle-opacity': 0.07,
+      'circle-opacity': 0.08,
       'circle-blur': 1.6,
+      'circle-emissive-strength': 1,
     },
   });
 
@@ -78,6 +166,7 @@ function addZoneLayers(map: mapboxgl.Map) {
     id: 'zones-pulse',
     type: 'circle',
     source: 'zones',
+    slot: 'top',
     paint: {
       'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 10, 15, 26],
       'circle-color': ['get', 'tierColor'],
@@ -86,14 +175,16 @@ function addZoneLayers(map: mapboxgl.Map) {
       'circle-stroke-width': 1.5,
       'circle-stroke-color': ['get', 'tierColor'],
       'circle-stroke-opacity': 0.4,
+      'circle-emissive-strength': 1,
     },
   });
 
-  // Zone core dot
+  // Zone core dot — the click target
   map.addLayer({
     id: 'zones-core',
     type: 'circle',
     source: 'zones',
+    slot: 'top',
     paint: {
       'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 5, 15, 10],
       'circle-color': ['get', 'tierColor'],
@@ -101,6 +192,7 @@ function addZoneLayers(map: mapboxgl.Map) {
       'circle-stroke-width': 2.5,
       'circle-stroke-color': '#0A0E1A',
       'circle-stroke-opacity': 0.9,
+      'circle-emissive-strength': 1,
     },
   });
 
@@ -109,10 +201,12 @@ function addZoneLayers(map: mapboxgl.Map) {
     id: 'zones-inner',
     type: 'circle',
     source: 'zones',
+    slot: 'top',
     paint: {
       'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 2, 15, 4],
       'circle-color': '#ffffff',
       'circle-opacity': 0.75,
+      'circle-emissive-strength': 1,
     },
   });
 
@@ -121,10 +215,11 @@ function addZoneLayers(map: mapboxgl.Map) {
     id: 'zones-label',
     type: 'symbol',
     source: 'zones',
+    slot: 'top',
     minzoom: 13,
     layout: {
       'text-field': ['get', 'name'],
-      'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
+      'text-font': ['DIN Pro Medium', 'Arial Unicode MS Regular'],
       'text-size': 11,
       'text-offset': [0, 1.8],
       'text-anchor': 'top',
@@ -134,6 +229,7 @@ function addZoneLayers(map: mapboxgl.Map) {
       'text-halo-color': '#0A0E1A',
       'text-halo-width': 2,
       'text-opacity': 0.9,
+      'text-emissive-strength': 1,
     },
   });
 
@@ -142,11 +238,13 @@ function addZoneLayers(map: mapboxgl.Map) {
     id: 'ambient-players',
     type: 'circle',
     source: 'ambient-players',
+    slot: 'top',
     paint: {
       'circle-radius': 3.5,
       'circle-color': ['get', 'color'],
       'circle-opacity': 0.5,
       'circle-blur': 0.6,
+      'circle-emissive-strength': 1,
     },
   });
 
@@ -155,6 +253,7 @@ function addZoneLayers(map: mapboxgl.Map) {
     id: 'real-players',
     type: 'circle',
     source: 'real-players',
+    slot: 'top',
     paint: {
       'circle-radius': 6,
       'circle-color': ['get', 'color'],
@@ -162,6 +261,7 @@ function addZoneLayers(map: mapboxgl.Map) {
       'circle-stroke-width': 2,
       'circle-stroke-color': '#F0F4FF',
       'circle-stroke-opacity': 0.8,
+      'circle-emissive-strength': 1,
     },
   });
 }
@@ -173,17 +273,26 @@ export default function CityMap() {
   const selected_zone = useGameStore((s) => s.selected_zone);
   const activeTab = useGameStore(selectActiveTab);
   const [popupPos, setPopupPos] = useState<{ x: number; y: number } | null>(null);
+  const introDone = useRef(false);
 
   useEffect(() => {
     if (mapRef.current || !mapContainer.current) return;
 
     const map = new mapboxgl.Map({
       container: mapContainer.current,
-      style: 'mapbox://styles/mapbox/light-v11',
+      style: 'mapbox://styles/mapbox/standard',
+      config: {
+        basemap: {
+          lightPreset: 'dusk',
+          showPointOfInterestLabels: false,
+          showTransitLabels: false,
+        },
+      },
+      // Start high and flat — the intro flight brings us down into the city
       center: [mapView.longitude, mapView.latitude],
-      zoom: mapView.zoom,
-      pitch: mapView.pitch,
-      bearing: mapView.bearing,
+      zoom: Math.min(mapView.zoom, 11.8),
+      pitch: 0,
+      bearing: 0,
       minZoom: MAP_CONFIG.minZoom,
       maxZoom: MAP_CONFIG.maxZoom,
       maxBounds: MAP_CONFIG.maxBounds,
@@ -191,24 +300,33 @@ export default function CityMap() {
     });
 
     mapRef.current = map;
+    let pulseRaf: number | null = null;
 
-    map.on('load', () => {
-      // Tune light-v11 to match the app's blue-white palette
-      const setFill = (id: string, color: string) => {
-        if (map.getLayer(id)) map.setPaintProperty(id, 'fill-color', color);
-      };
-      const setLine = (id: string, color: string) => {
-        if (map.getLayer(id)) map.setPaintProperty(id, 'line-color', color);
-      };
-
-      setFill('water', '#B8D4E8');
-      setFill('water-shadow', '#B8D4E8');
-      setLine('waterway', '#99BCD6');
-      setLine('waterway-shadow', '#99BCD6');
-      setFill('landcover-wood', '#C8DDB8');
-      setFill('national-park', '#C4DAB4');
-
+    map.on('style.load', () => {
       addZoneLayers(map);
+
+      // Cinematic intro — dive from orbit into the dusk city, banking as we descend
+      if (!introDone.current) {
+        introDone.current = true;
+        map.flyTo({
+          center: [mapView.longitude, mapView.latitude],
+          zoom: 14.6,
+          pitch: 62,
+          bearing: -24,
+          duration: 4200,
+          curve: 1.6,
+          essential: true,
+        });
+      }
+
+      // Breathing beacons — beams pulse slowly like a heartbeat
+      const pulse = () => {
+        if (!map.getLayer('zones-beam')) return;
+        const t = performance.now() / 1000;
+        map.setPaintProperty('zones-beam', 'fill-extrusion-opacity', 0.38 + 0.16 * Math.sin(t * 1.6));
+        pulseRaf = requestAnimationFrame(pulse);
+      };
+      pulseRaf = requestAnimationFrame(pulse);
 
       // Zone click — prefer live store data (ownership), fall back to static
       map.on('click', 'zones-core', (e) => {
@@ -224,8 +342,23 @@ export default function CityMap() {
         if (window.innerWidth >= 1024) state.setActiveTab('surf');
       });
 
+      // Beams are big click targets too — tapping a beacon selects its zone
+      map.on('click', 'zones-beam', (e) => {
+        if (!e.features?.[0]) return;
+        const zoneId = e.features[0].properties?.id as string;
+        const state = useGameStore.getState();
+        const zone =
+          state.nearby_zones.find((z) => z.id === zoneId) ??
+          DAR_ZONES.find((z) => z.id === zoneId);
+        if (!zone) return;
+        state.selectZone(zone);
+        if (window.innerWidth >= 1024) state.setActiveTab('surf');
+      });
+
       map.on('mouseenter', 'zones-core', () => { map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', 'zones-core', () => { map.getCanvas().style.cursor = ''; });
+      map.on('mouseenter', 'zones-beam', () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'zones-beam', () => { map.getCanvas().style.cursor = ''; });
 
       setMapLoaded(true);
     });
@@ -245,6 +378,7 @@ export default function CityMap() {
     });
 
     return () => {
+      if (pulseRaf !== null) cancelAnimationFrame(pulseRaf);
       map.remove();
       mapRef.current = null;
     };
@@ -261,10 +395,14 @@ export default function CityMap() {
       return;
     }
 
+    // Cinematic approach — swoop in low with a slight orbit toward the beacon
     map.flyTo({
       center: [selected_zone.lng, selected_zone.lat],
-      zoom: Math.max(map.getZoom(), 14),
-      duration: 600,
+      zoom: Math.max(map.getZoom(), 15.6),
+      pitch: 62,
+      bearing: map.getBearing() + 18,
+      duration: 1500,
+      curve: 1.4,
       essential: true,
     });
 
@@ -303,7 +441,7 @@ export default function CityMap() {
   }, [nearby_players]);
 
   return (
-    <div className="absolute inset-0" style={{ background: 'var(--color-bg)' }}>
+    <div className="absolute inset-0" style={{ background: '#0A0E1A' }}>
       <div ref={mapContainer} className="absolute inset-0 w-full h-full" />
       {/* Floating popup — mobile only; desktop uses the sidebar */}
       <AnimatePresence>

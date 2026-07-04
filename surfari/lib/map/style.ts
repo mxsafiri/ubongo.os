@@ -12,9 +12,9 @@ export const MAP_CONFIG = {
 export const DEFAULT_VIEW: MapViewState = {
   longitude: 39.2083,
   latitude: -6.7924,
-  zoom: 13,
-  pitch: 45,
-  bearing: -15,
+  zoom: 14.6,
+  pitch: 62,
+  bearing: -24,
 };
 
 export const SURFARI_MAP_STYLE = {
