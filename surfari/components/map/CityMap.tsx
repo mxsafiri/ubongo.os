@@ -129,6 +129,10 @@ function addZoneLayers(map: mapboxgl.Map) {
     type: 'geojson',
     data: { type: 'FeatureCollection', features: [] },
   });
+  map.addSource('plant-site', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [] },
+  });
 
   // Territory dome — translucent disc over the zone's real radius, depth-sorted with buildings
   map.addLayer({
@@ -275,6 +279,46 @@ function addZoneLayers(map: mapboxgl.Map) {
       'circle-stroke-width': 2,
       'circle-stroke-color': '#F0F4FF',
       'circle-stroke-opacity': 0.8,
+      'circle-emissive-strength': 1,
+    },
+  });
+
+  // Plant-site marker — pulsing target where the player wants to build turf
+  map.addLayer({
+    id: 'plant-site-glow',
+    type: 'circle',
+    source: 'plant-site',
+    slot: 'top',
+    paint: {
+      'circle-radius': 26,
+      'circle-color': '#00E096',
+      'circle-opacity': 0.18,
+      'circle-blur': 0.9,
+      'circle-emissive-strength': 1,
+    },
+  });
+  map.addLayer({
+    id: 'plant-site-ring',
+    type: 'circle',
+    source: 'plant-site',
+    slot: 'top',
+    paint: {
+      'circle-radius': 13,
+      'circle-color': 'transparent',
+      'circle-stroke-width': 2.5,
+      'circle-stroke-color': '#00E096',
+      'circle-stroke-opacity': 0.9,
+      'circle-emissive-strength': 1,
+    },
+  });
+  map.addLayer({
+    id: 'plant-site-core',
+    type: 'circle',
+    source: 'plant-site',
+    slot: 'top',
+    paint: {
+      'circle-radius': 4,
+      'circle-color': '#00E096',
       'circle-emissive-strength': 1,
     },
   });
@@ -438,6 +482,16 @@ export default function CityMap() {
       map.on('mouseenter', 'zones-beam', () => { map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', 'zones-beam', () => { map.getCanvas().style.cursor = ''; });
 
+      // Empty-map click → drop a plant-site target (build-your-own-turf flow).
+      // Zone layer clicks take priority; only open plant mode on bare ground.
+      map.on('click', (e) => {
+        const hits = map.queryRenderedFeatures(e.point, { layers: ['zones-core', 'zones-beam'] });
+        if (hits.length > 0) return;
+        const state = useGameStore.getState();
+        if (!state.player) return;
+        state.setPlantSite({ lng: e.lngLat.lng, lat: e.lngLat.lat });
+      });
+
       setMapLoaded(true);
     });
 
@@ -563,10 +617,30 @@ export default function CityMap() {
       prev.set(z.id, z.owner_id ?? null);
     }
 
-    // Keep zone properties (state, ownership) current on the map
+    // Keep zone properties (state, ownership) current on the map — and rebuild
+    // beams + territory so newly planted player turf gets its beacon instantly
     const src = map.getSource('zones') as mapboxgl.GeoJSONSource | undefined;
     src?.setData(buildZonesGeoJSON(nearby_zones));
+    const beamSrc = map.getSource('zone-beams') as mapboxgl.GeoJSONSource | undefined;
+    beamSrc?.setData(buildBeamsGeoJSON(nearby_zones));
+    const terrSrc = map.getSource('zone-territory') as mapboxgl.GeoJSONSource | undefined;
+    terrSrc?.setData(buildTerritoryGeoJSON(nearby_zones));
   }, [nearby_zones]);
+
+  // Show/hide the plant-site target marker
+  const plant_site = useGameStore((s) => s.plant_site);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+    const src = map.getSource('plant-site') as mapboxgl.GeoJSONSource | undefined;
+    if (!src) return;
+    src.setData({
+      type: 'FeatureCollection',
+      features: plant_site
+        ? [{ type: 'Feature', geometry: { type: 'Point', coordinates: [plant_site.lng, plant_site.lat] }, properties: {} }]
+        : [],
+    });
+  }, [plant_site]);
 
   // Update real-players source when nearby_players changes
   useEffect(() => {

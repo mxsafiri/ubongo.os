@@ -7,6 +7,7 @@ import { useGameStore, selectPhase, selectMapLoaded, selectActiveTab, selectThem
 import { loadSavedPlayer } from '@/lib/storage';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import Onboarding from '@/components/game/Onboarding';
+import { PlantFlow } from '@/components/game/PlantFlow';
 import HUD from '@/components/layout/HUD';
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar';
 import { CityChat } from '@/components/chat/CityChat';
@@ -98,6 +99,7 @@ export default function SurfariPage() {
             </div>
           )}
           {phase === 'onboarding' && <Onboarding />}
+          {showHUD && <PlantFlow />}
           <Toast />
         </div>
 
@@ -149,6 +151,7 @@ export default function SurfariPage() {
         </AnimatePresence>
       )}
 
+      {showHUD && <PlantFlow />}
       {showHUD && <CityChat />}
       {showHUD && <Toast />}
       {showHUD && <HUD />}
