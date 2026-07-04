@@ -12,6 +12,16 @@ import { selectActiveTab } from '@/store/game';
 
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!;
 
+// Real-time Dar es Salaam (EAT, UTC+3) light cycle
+function darLightPreset(): 'dawn' | 'day' | 'dusk' | 'night' {
+  const now = new Date();
+  const h = (now.getUTCHours() + now.getUTCMinutes() / 60 + 3) % 24;
+  if (h >= 5 && h < 7) return 'dawn';
+  if (h >= 7 && h < 17) return 'day';
+  if (h >= 17 && h < 19.5) return 'dusk';
+  return 'night';
+}
+
 // Beam height per tier — crown zones tower over the city
 const TIER_BEAM_HEIGHT: Record<string, number> = {
   crown: 900,
@@ -112,6 +122,10 @@ function addZoneLayers(map: mapboxgl.Map) {
   map.addSource('zone-territory', { type: 'geojson', data: buildTerritoryGeoJSON(DAR_ZONES) });
   map.addSource('ambient-players', { type: 'geojson', data: buildAmbientPlayers() });
   map.addSource('real-players', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [] },
+  });
+  map.addSource('shockwave', {
     type: 'geojson',
     data: { type: 'FeatureCollection', features: [] },
   });
@@ -264,6 +278,68 @@ function addZoneLayers(map: mapboxgl.Map) {
       'circle-emissive-strength': 1,
     },
   });
+
+  // Capture shockwave — expanding ring + glow, animated via rAF on ownership change
+  map.addLayer({
+    id: 'shockwave-glow',
+    type: 'circle',
+    source: 'shockwave',
+    slot: 'top',
+    paint: {
+      'circle-radius': 5,
+      'circle-color': ['get', 'color'],
+      'circle-opacity': 0,
+      'circle-blur': 1,
+      'circle-emissive-strength': 1,
+    },
+  });
+  map.addLayer({
+    id: 'shockwave-ring',
+    type: 'circle',
+    source: 'shockwave',
+    slot: 'top',
+    paint: {
+      'circle-radius': 10,
+      'circle-color': ['get', 'color'],
+      'circle-opacity': 0,
+      'circle-stroke-width': 3,
+      'circle-stroke-color': ['get', 'color'],
+      'circle-stroke-opacity': 0,
+      'circle-emissive-strength': 1,
+    },
+  });
+}
+
+// Expanding ring + fading glow at a capture point, ~1.4s
+function fireShockwave(map: mapboxgl.Map, lng: number, lat: number, color: string) {
+  const src = map.getSource('shockwave') as mapboxgl.GeoJSONSource | undefined;
+  if (!src || !map.getLayer('shockwave-ring')) return;
+  src.setData({
+    type: 'FeatureCollection',
+    features: [{
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [lng, lat] },
+      properties: { color },
+    }],
+  });
+  const start = performance.now();
+  const DUR = 1400;
+  const step = () => {
+    if (!map.getLayer('shockwave-ring')) return;
+    const t = (performance.now() - start) / DUR;
+    if (t >= 1) {
+      map.setPaintProperty('shockwave-ring', 'circle-stroke-opacity', 0);
+      map.setPaintProperty('shockwave-glow', 'circle-opacity', 0);
+      return;
+    }
+    const ease = 1 - Math.pow(1 - t, 3);
+    map.setPaintProperty('shockwave-ring', 'circle-radius', 8 + ease * 120);
+    map.setPaintProperty('shockwave-ring', 'circle-stroke-opacity', 0.9 * (1 - t));
+    map.setPaintProperty('shockwave-glow', 'circle-radius', 5 + ease * 80);
+    map.setPaintProperty('shockwave-glow', 'circle-opacity', 0.4 * (1 - t));
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
 }
 
 export default function CityMap() {
@@ -274,6 +350,8 @@ export default function CityMap() {
   const activeTab = useGameStore(selectActiveTab);
   const [popupPos, setPopupPos] = useState<{ x: number; y: number } | null>(null);
   const introDone = useRef(false);
+  const prevOwnersRef = useRef<Map<string, string | null>>(new Map());
+  const wanderersRef = useRef<{ lng: number; lat: number; heading: number; speed: number; color: string }[]>([]);
 
   useEffect(() => {
     if (mapRef.current || !mapContainer.current) return;
@@ -283,7 +361,7 @@ export default function CityMap() {
       style: 'mapbox://styles/mapbox/standard',
       config: {
         basemap: {
-          lightPreset: 'dusk',
+          lightPreset: darLightPreset(),
           showPointOfInterestLabels: false,
           showTransitLabels: false,
         },
@@ -366,6 +444,51 @@ export default function CityMap() {
     // Fallback — mark loaded even on style error so the UI isn't stuck
     map.on('error', () => setMapLoaded(true));
 
+    // Follow real Dar es Salaam time — re-check the light preset every 5 minutes
+    const lightInterval = setInterval(() => {
+      try {
+        map.setConfigProperty('basemap', 'lightPreset', darLightPreset());
+      } catch { /* style not ready yet */ }
+    }, 5 * 60 * 1000);
+
+    // Ambient wanderers — city dwellers drifting through the streets
+    const wanderInterval = setInterval(() => {
+      if (!map.getSource('ambient-players')) return;
+      if (wanderersRef.current.length === 0) {
+        const center = { lng: 39.2083, lat: -6.7924 };
+        const colors = ['#00C2FF', '#FF7A35', '#00E096', '#FFB800', '#7C5CFC', '#FF4757', '#00C2FF', '#00E096'];
+        wanderersRef.current = Array.from({ length: 8 }, (_, i) => ({
+          lng: center.lng + (Math.random() - 0.5) * 0.06,
+          lat: center.lat + (Math.random() - 0.5) * 0.06,
+          heading: Math.random() * Math.PI * 2,
+          speed: 0.000045 + Math.random() * 0.00005,
+          color: colors[i % colors.length],
+        }));
+      }
+      const bounds = { minLng: 39.16, maxLng: 39.32, minLat: -6.85, maxLat: -6.74 };
+      for (const w of wanderersRef.current) {
+        w.heading += (Math.random() - 0.5) * 0.5; // gentle meandering
+        w.lng += Math.cos(w.heading) * w.speed;
+        w.lat += Math.sin(w.heading) * w.speed;
+        // Turn around at the city edge
+        if (w.lng < bounds.minLng || w.lng > bounds.maxLng || w.lat < bounds.minLat || w.lat > bounds.maxLat) {
+          w.heading += Math.PI;
+          w.lng = Math.min(Math.max(w.lng, bounds.minLng), bounds.maxLng);
+          w.lat = Math.min(Math.max(w.lat, bounds.minLat), bounds.maxLat);
+        }
+      }
+      const src = map.getSource('ambient-players') as mapboxgl.GeoJSONSource | undefined;
+      src?.setData({
+        type: 'FeatureCollection',
+        features: wanderersRef.current.map((w, i) => ({
+          type: 'Feature',
+          id: `ambient-${i}`,
+          geometry: { type: 'Point', coordinates: [w.lng, w.lat] },
+          properties: { color: w.color },
+        })),
+      });
+    }, 150);
+
     map.on('moveend', () => {
       const center = map.getCenter();
       setMapView({
@@ -379,6 +502,8 @@ export default function CityMap() {
 
     return () => {
       if (pulseRaf !== null) cancelAnimationFrame(pulseRaf);
+      clearInterval(lightInterval);
+      clearInterval(wanderInterval);
       map.remove();
       mapRef.current = null;
     };
@@ -420,6 +545,28 @@ export default function CityMap() {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected_zone]);
+
+  // Watch live zone data — refresh map sources and fire a capture shockwave
+  // whenever any zone changes hands
+  const nearby_zones = useGameStore((s) => s.nearby_zones);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded() || nearby_zones.length === 0) return;
+
+    const prev = prevOwnersRef.current;
+    const firstRun = prev.size === 0;
+    for (const z of nearby_zones) {
+      const old = prev.get(z.id);
+      if (!firstRun && old !== undefined && old !== (z.owner_id ?? null)) {
+        fireShockwave(map, z.lng, z.lat, z.owner_color ?? '#00E096');
+      }
+      prev.set(z.id, z.owner_id ?? null);
+    }
+
+    // Keep zone properties (state, ownership) current on the map
+    const src = map.getSource('zones') as mapboxgl.GeoJSONSource | undefined;
+    src?.setData(buildZonesGeoJSON(nearby_zones));
+  }, [nearby_zones]);
 
   // Update real-players source when nearby_players changes
   useEffect(() => {
