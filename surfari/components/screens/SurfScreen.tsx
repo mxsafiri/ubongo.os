@@ -286,6 +286,7 @@ export function SurfScreen() {
       {arenaOpen && zone && (
         <GameArena
           zoneName={zone.name}
+          ownerHandle={zone.owner_handle}
           difficulty={difficulty}
           onWin={handleWin}
           onLose={handleLose}
