@@ -76,6 +76,16 @@ export function BodaRush({ difficulty, onWin, onLose }: {
     switchLane(x < midX ? -1 : 1);
   }, [switchLane]);
 
+  // Keyboard steering — arrows or A/D on desktop
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { e.preventDefault(); switchLane(-1); }
+      else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { e.preventDefault(); switchLane(1); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [switchLane]);
+
   // Countdown
   useEffect(() => {
     if (phase !== 'countdown') return;
@@ -292,7 +302,7 @@ export function BodaRush({ difficulty, onWin, onLose }: {
 
       {phase === 'playing' && (
         <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)', letterSpacing: '0.06em' }}>
-          TAP LEFT / RIGHT TO DODGE — SURVIVE {cfg.timeLimit}s
+          TAP OR ← → TO DODGE — SURVIVE {cfg.timeLimit}s
         </p>
       )}
     </div>
