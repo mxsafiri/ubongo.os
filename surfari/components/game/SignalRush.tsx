@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { sfx } from '@/lib/game/sfx';
+import { Shaker, Burst, ComboFloat } from './juice';
 
 interface Config {
   fadeMs: number;
@@ -33,9 +35,12 @@ export function SignalRush({ difficulty, onWin, onLose }: {
   const [nodes, setNodes] = useState<NodeState[]>(Array(9).fill('idle'));
   const [taps, setTaps] = useState(0);
   const [timeLeft, setTimeLeft] = useState(cfg.timeLimit);
+  const [combo, setCombo] = useState(0);
+  const [shake, setShake] = useState(0);
 
   const playingRef = useRef(false);
   const tapsRef = useRef(0);
+  const comboRef = useRef(0);
   const activeRef = useRef<Set<number>>(new Set());
   const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
@@ -63,6 +68,10 @@ export function SignalRush({ difficulty, onWin, onLose }: {
         if (!playingRef.current) return;
         activeRef.current.delete(idx);
         timers.current.delete(idx);
+        sfx.miss();
+        comboRef.current = 0;
+        setCombo(0);
+        setShake((s) => s + 1);
         setNodes((p) => p.map((s, i) => (i === idx && s === 'active' ? 'miss' : s)));
         setTimeout(() => {
           setNodes((p) => p.map((s, i) => (i === idx && s === 'miss' ? 'idle' : s)));
@@ -78,6 +87,7 @@ export function SignalRush({ difficulty, onWin, onLose }: {
   // Countdown
   useEffect(() => {
     if (phase !== 'countdown') return;
+    sfx.countdown(countdown);
     if (countdown <= 0) {
       setPhase('playing');
       return;
@@ -100,6 +110,7 @@ export function SignalRush({ difficulty, onWin, onLose }: {
     if (phase !== 'playing') return;
     if (timeLeft <= 0) {
       stopAll();
+      sfx.lose();
       setPhase('done');
       setTimeout(onLose, 500);
       return;
@@ -126,9 +137,13 @@ export function SignalRush({ difficulty, onWin, onLose }: {
 
     tapsRef.current++;
     setTaps(tapsRef.current);
+    comboRef.current++;
+    setCombo(comboRef.current);
+    sfx.hit(comboRef.current);
 
     if (tapsRef.current >= cfg.target) {
       stopAll();
+      sfx.win();
       setPhase('done');
       setTimeout(onWin, 500);
     }
@@ -168,6 +183,7 @@ export function SignalRush({ difficulty, onWin, onLose }: {
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)', letterSpacing: '0.1em' }}>
           SIGNAL RUSH
         </span>
+        <ComboFloat combo={combo} />
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-secondary)' }}>
           {taps} / {cfg.target} locked
         </span>
@@ -190,17 +206,19 @@ export function SignalRush({ difficulty, onWin, onLose }: {
             </span>
           </motion.div>
         ) : (
-          <motion.div
-            key="grid"
-            className="grid gap-3 w-full"
-            style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-          >
-            {nodes.map((state, i) => (
-              <NodeCell key={i} state={state} onTap={() => tap(i)} />
-            ))}
-          </motion.div>
+          <Shaker key="grid-shaker" trigger={shake}>
+            <motion.div
+              key="grid"
+              className="grid gap-3 w-full"
+              style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+            >
+              {nodes.map((state, i) => (
+                <NodeCell key={i} state={state} onTap={() => tap(i)} />
+              ))}
+            </motion.div>
+          </Shaker>
         )}
       </AnimatePresence>
 
@@ -223,7 +241,7 @@ function NodeCell({ state, onTap }: { state: NodeState; onTap: () => void }) {
     <motion.button
       onClick={onTap}
       disabled={!isActive}
-      className="rounded-2xl flex items-center justify-center"
+      className="relative rounded-2xl flex items-center justify-center"
       style={{
         aspectRatio: '1',
         cursor: isActive ? 'pointer' : 'default',
@@ -271,6 +289,7 @@ function NodeCell({ state, onTap }: { state: NodeState; onTap: () => void }) {
             ✓
           </motion.span>
         )}
+        {isHit && <Burst key="burst" color="#00ffb0" />}
         {isMiss && (
           <motion.span
             key="miss"

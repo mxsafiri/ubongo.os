@@ -1,8 +1,9 @@
 'use client';
 
-import { useRef } from 'react';
+import { useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
+import { sfx } from '@/lib/game/sfx';
 import { SignalRush } from './SignalRush';
 import { BodaRush } from './BodaRush';
 import { FrequencyDuel } from './FrequencyDuel';
@@ -39,6 +40,10 @@ export function GameArena({ zoneName, difficulty, onWin, onLose, onAbort }: {
   const game = useRef<GameId>(pickGame()).current;
   const meta = GAME_META[game];
   const diff = difficultyLabel(difficulty);
+
+  // Arena opens from a button tap, so this call is inside a user gesture —
+  // create the AudioContext now so game sounds are allowed to play.
+  useEffect(() => { sfx.unlock(); }, []);
 
   const GameComponent =
     game === 'signal'    ? SignalRush
