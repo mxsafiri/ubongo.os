@@ -24,6 +24,7 @@ interface GameStore {
   notifications: GameNotification[];
   mapView: MapViewState;
   mapLoaded: boolean;
+  plant_site: { lng: number; lat: number } | null;
 
   // Actions
   setPhase: (phase: GamePhase) => void;
@@ -46,6 +47,8 @@ interface GameStore {
   clearNotifications: () => void;
   fetchZones: () => Promise<void>;
   surfZone: (zoneId: string) => Promise<void>;
+  setPlantSite: (site: { lng: number; lat: number } | null) => void;
+  plantTurf: () => Promise<Zone | null>;
 }
 
 export const useGameStore = create<GameStore>()(
@@ -61,6 +64,7 @@ export const useGameStore = create<GameStore>()(
     notifications: [],
     mapView: DEFAULT_VIEW,
     mapLoaded: false,
+    plant_site: null,
 
     setPhase: (phase) => set({ phase }),
 
@@ -183,6 +187,32 @@ export const useGameStore = create<GameStore>()(
         console.error('surfZone', err);
       }
     },
+
+    setPlantSite: (plant_site) => set({ plant_site }),
+
+    plantTurf: async () => {
+      const { player, plant_site } = get();
+      if (!player || !plant_site) return null;
+      try {
+        const res = await fetch('/api/game/zones', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ player_id: player.id, lat: plant_site.lat, lng: plant_site.lng }),
+        });
+        if (!res.ok) return null;
+        const { zone, player: updatedPlayer } = await res.json();
+        set((state) => ({
+          player: updatedPlayer ?? state.player,
+          nearby_zones: [...state.nearby_zones, zone],
+          selected_zone: zone,
+          plant_site: null,
+        }));
+        return zone as Zone;
+      } catch (err) {
+        console.error('plantTurf', err);
+        return null;
+      }
+    },
   }))
 );
 
@@ -200,3 +230,4 @@ export const selectUnreadCount = (s: GameStore) =>
 export const selectMapView = (s: GameStore) => s.mapView;
 export const selectMapLoaded = (s: GameStore) => s.mapLoaded;
 export const selectTheme = (s: GameStore) => s.theme;
+export const selectPlantSite = (s: GameStore) => s.plant_site;
