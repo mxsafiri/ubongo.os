@@ -27,20 +27,28 @@ function getDifficulty(claimStrength: number, isClaimed: boolean): number {
   return 0.45;
 }
 
-type Action = 'claim' | 'challenge' | 'reinforce';
+// Building your own turf gets harder as it levels — expanding an empire costs sweat
+function getBuildDifficulty(level: number): number {
+  return Math.min(0.2 + (level - 1) * 0.15, 0.8);
+}
+
+const ROMAN = ['I', 'II', 'III', 'IV', 'V'];
+const MAX_LEVEL = 5;
+
+type Action = 'claim' | 'challenge' | 'build';
 
 export function SurfScreen() {
   const zone = useGameStore(selectSelectedZone);
   const setActiveTab = useGameStore((s) => s.setActiveTab);
   const selectZone = useGameStore((s) => s.selectZone);
   const surfZone = useGameStore((s) => s.surfZone);
+  const buildZone = useGameStore((s) => s.buildZone);
   const addNotification = useGameStore((s) => s.addNotification);
   const player = useGameStore((s) => s.player);
 
   const [arenaOpen, setArenaOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<Action | null>(null);
-  const [reinforcing, setReinforcing] = useState(false);
-  const [result, setResult] = useState<'win' | 'lose' | 'claimed' | 'reinforced' | null>(null);
+  const [result, setResult] = useState<'win' | 'lose' | 'claimed' | 'built' | 'reinforced' | null>(null);
 
   const openGame = (action: Action) => {
     setPendingAction(action);
@@ -55,7 +63,45 @@ export function SurfScreen() {
 
   const handleWin = useCallback(async () => {
     if (!player || !zone) return;
+    const action = pendingAction;
     closeArena();
+
+    // ── Build & Defend: owner won the build game ──
+    if (action === 'build') {
+      const level = zone.level ?? 1;
+      if (level < MAX_LEVEL) {
+        const ok = await buildZone(zone.id);
+        const updated = useGameStore.getState().selected_zone;
+        if (ok && updated) {
+          setResult('built');
+          addNotification({
+            type: 'zone_claimed',
+            title: `🏗️ ${zone.name} → LVL ${ROMAN[(updated.level ?? 2) - 1]}`,
+            message: `Yield up to ${formatTokens(updated.daily_yield)}/day. Strength ${updated.claim_strength}%.`,
+          });
+          postEvent(null, player, `🏗️ @${player.handle} built ${zone.name} up to LVL ${ROMAN[(updated.level ?? 2) - 1]} — now worth ${formatTokens(updated.daily_yield)}/day`, null);
+        } else {
+          setResult('lose');
+          addNotification({
+            type: 'system',
+            title: 'Build failed',
+            message: 'Not enough Tide, or the zone is maxed out.',
+          });
+        }
+      } else {
+        // Maxed — the win still hardens the walls
+        await surfZone(zone.id);
+        const updated = useGameStore.getState().selected_zone;
+        setResult('reinforced');
+        addNotification({
+          type: 'zone_claimed',
+          title: '🛡️ Turf defended',
+          message: `${zone.name} strength is now ${updated?.claim_strength ?? 0}%.`,
+        });
+      }
+      setTimeout(() => setResult(null), 3000);
+      return;
+    }
 
     const prevOwnerId = zone.owner_id;
     await surfZone(zone.id);
@@ -92,42 +138,29 @@ export function SurfScreen() {
 
     setTimeout(() => setResult(null), 3000);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [player, zone]);
+  }, [player, zone, pendingAction]);
 
   const handleLose = useCallback(() => {
     if (!zone || !player) return;
+    const action = pendingAction;
     closeArena();
     setResult('lose');
     addNotification({
       type: 'zone_contested',
-      title: zone.owner_id ? '💨 Challenge failed' : '💨 Missed your shot',
-      message: zone.owner_id
+      title: action === 'build' ? '🚧 Build crew got jumped' : zone.owner_id ? '💨 Challenge failed' : '💨 Missed your shot',
+      message: action === 'build'
+        ? 'No progress this time. Run it back — the turf holds.'
+        : zone.owner_id
         ? `${zone.owner_handle} held their ground. Try again.`
         : `The zone slipped away. Still up for grabs — try again!`,
     });
     setTimeout(() => setResult(null), 3000);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zone, player]);
+  }, [zone, player, pendingAction]);
 
   const handleAbort = useCallback(() => {
     closeArena();
   }, []);
-
-  const handleReinforce = useCallback(async () => {
-    if (!player || !zone || reinforcing) return;
-    setReinforcing(true);
-    await surfZone(zone.id);
-    const updatedZone = useGameStore.getState().selected_zone;
-    setResult('reinforced');
-    setReinforcing(false);
-    addNotification({
-      type: 'zone_claimed',
-      title: 'Zone reinforced',
-      message: `${zone.name} strength is now ${updatedZone?.claim_strength ?? 0}%`,
-    });
-    setTimeout(() => setResult(null), 3000);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [player, zone, reinforcing]);
 
   if (!zone) {
     return (
@@ -164,7 +197,11 @@ export function SurfScreen() {
   const tierColor = ZONE_TIER_COLORS[zone.tier] ?? '#3D5470';
   const isClaimed = !!zone.owner_id;
   const isOwn = !!(player && zone.owner_id === player.id);
+  const level = zone.level ?? 1;
+  const isMaxed = level >= MAX_LEVEL;
+  const buildCost = level * 200;
   const difficulty = getDifficulty(zone.claim_strength ?? 0, isClaimed);
+  const arenaDifficulty = pendingAction === 'build' ? getBuildDifficulty(level) : difficulty;
 
   return (
     <>
@@ -228,15 +265,18 @@ export function SurfScreen() {
                   }}
                 >
                   <span style={{ fontSize: '24px' }}>
-                    {result === 'win' ? '🏆' : result === 'claimed' ? '🏴' : result === 'reinforced' ? '🛡️' : '💨'}
+                    {result === 'win' ? '🏆' : result === 'claimed' ? '🏴' : result === 'built' ? '🏗️' : result === 'reinforced' ? '🛡️' : '💨'}
                   </span>
                   <div>
                     <p style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)', marginBottom: 2 }}>
-                      {result === 'win' ? 'Zone Captured!' : result === 'claimed' ? 'Zone Claimed!' : result === 'reinforced' ? 'Reinforced!' : 'Repelled!'}
+                      {result === 'win' ? 'Zone Captured!' : result === 'claimed' ? 'Zone Claimed!'
+                        : result === 'built' ? `Built to LVL ${ROMAN[level - 1]}!`
+                        : result === 'reinforced' ? 'Turf Defended!' : 'Repelled!'}
                     </p>
                     <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
                       {result === 'win' ? `+${formatTokens(zone.daily_yield)} Tide/day`
                         : result === 'claimed' ? `Earning ${formatTokens(zone.daily_yield)} Tide/day`
+                        : result === 'built' ? `Now ${formatTokens(zone.daily_yield)}/day · strength ${zone.claim_strength}%`
                         : result === 'reinforced' ? `Strength at ${zone.claim_strength}%`
                         : 'Come back stronger next time'}
                     </p>
@@ -248,19 +288,52 @@ export function SurfScreen() {
             {!player ? (
               <p style={{ textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)', padding: '14px 0' }}>Sign in to surf zones</p>
             ) : isOwn ? (
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2.5">
+                {/* Level plate + next-level preview */}
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-center px-3 py-1.5"
+                    style={{ border: '1.5px solid var(--color-gold)', background: 'rgba(245,158,11,0.07)' }}>
+                    <span style={{ fontFamily: 'var(--font-arcade)', fontSize: '18px', lineHeight: 1, color: 'var(--color-gold)', letterSpacing: '0.1em' }}>
+                      LVL {ROMAN[level - 1]}
+                    </span>
+                  </div>
+                  <div className="flex-1 flex gap-1">
+                    {Array.from({ length: MAX_LEVEL }, (_, i) => (
+                      <div key={i} className="flex-1 h-1.5" style={{
+                        background: i < level ? 'linear-gradient(90deg, var(--color-gold), var(--color-warning))' : 'var(--border-mid)',
+                      }} />
+                    ))}
+                  </div>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>
+                    {isMaxed ? 'MAXED' : `NEXT: +150/d · ${buildCost}T`}
+                  </span>
+                </div>
+
                 <motion.button
-                  className="flex-1 flex items-center justify-center gap-2 rounded-2xl"
-                  style={{ padding: '13px 16px', background: 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-accent) 100%)', boxShadow: '0 4px 20px rgba(0,153,194,0.28)', opacity: reinforcing ? 0.6 : 1 }}
+                  className="w-full flex items-center justify-center gap-2.5 rounded-2xl relative overflow-hidden"
+                  style={{
+                    padding: '14px 20px',
+                    background: isMaxed
+                      ? 'linear-gradient(135deg, var(--color-accent), var(--color-primary))'
+                      : 'linear-gradient(135deg, var(--color-gold) 0%, var(--color-secondary) 100%)',
+                    boxShadow: isMaxed ? '0 4px 20px rgba(109,40,217,0.3)' : '0 4px 20px rgba(217,119,6,0.3)',
+                  }}
                   whileTap={{ scale: 0.975 }}
-                  disabled={reinforcing}
-                  onClick={handleReinforce}
+                  transition={{ duration: 0.12 }}
+                  onClick={() => openGame('build')}
                 >
-                  <Waves size={14} style={{ color: '#fff' }} />
-                  <span style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: '14px', color: '#fff' }}>
-                    {reinforcing ? 'Reinforcing…' : 'Reinforce Zone'}
+                  <div className="absolute inset-0 pointer-events-none"
+                    style={{ background: 'linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.12) 50%, transparent 70%)' }} />
+                  <Waves size={15} style={{ color: '#fff' }} />
+                  <span style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: '14px', color: '#fff', letterSpacing: '0.02em' }}>
+                    {isMaxed ? 'Defend Turf' : `Build & Defend — LVL ${ROMAN[level]}`}
                   </span>
                 </motion.button>
+                <p style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center', lineHeight: 1.5 }}>
+                  {isMaxed
+                    ? 'Win the game to harden your walls (+10% strength).'
+                    : `Win the game to expand. Costs ${buildCost} Tide · yield +150/day · strength +15%.`}
+                </p>
               </div>
             ) : (
               <motion.button
@@ -285,9 +358,9 @@ export function SurfScreen() {
       {/* ── Full-screen game overlay ── */}
       {arenaOpen && zone && (
         <GameArena
-          zoneName={zone.name}
-          ownerHandle={zone.owner_handle}
-          difficulty={difficulty}
+          zoneName={pendingAction === 'build' ? `Build ${zone.name}` : zone.name}
+          ownerHandle={pendingAction === 'build' ? null : zone.owner_handle}
+          difficulty={arenaDifficulty}
           onWin={handleWin}
           onLose={handleLose}
           onAbort={handleAbort}

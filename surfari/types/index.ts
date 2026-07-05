@@ -99,6 +99,7 @@ export interface Zone {
   lng: number;
   radius_meters: number;
   claim_strength: number;
+  level?: number;
   traces: Trace[];
   trace_count: number;
   contested_threshold: number;
