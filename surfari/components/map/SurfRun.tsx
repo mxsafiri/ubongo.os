@@ -6,6 +6,7 @@ import mapboxgl from 'mapbox-gl';
 import { useGameStore } from '@/store/game';
 import { sfx } from '@/lib/game/sfx';
 import { createRunnerLayer } from './RunnerLayer';
+import { createCrewLayer } from './CrewLayer';
 
 const SPEED_MPS = 65;
 const COIN_VALUE = 25;
@@ -142,6 +143,33 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     const marker = new mapboxgl.Marker({ element: el, anchor: 'bottom', offset: [0, -96] })
       .setLngLat([center.lng, center.lat])
       .addTo(map);
+
+    /* ── Live crew: other riders as 3D characters ── */
+    const crew = createCrewLayer('crew-runners');
+    if (!map.getLayer('crew-runners')) map.addLayer(crew);
+    // Hide the flat dots while riding — the crew layer replaces them
+    if (map.getLayer('real-players')) map.setLayoutProperty('real-players', 'visibility', 'none');
+
+    const remoteTags = new Map<string, mapboxgl.Marker>();
+    const heartbeat = async () => {
+      try {
+        const p = posRef.current;
+        const res = await fetch('/api/game/players/position', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ player_id: player.id, lat: p.lat, lng: p.lng }),
+        });
+        if (!res.ok) return;
+        const { players: riders } = await res.json();
+        crew.setPlayers(
+          (riders as { id: string; handle: string; avatar_color: string; lat: number; lng: number }[])
+            .filter((r) => typeof r.lat === 'number' && typeof r.lng === 'number')
+            .map((r) => ({ id: r.id, handle: r.handle, color: r.avatar_color, lng: r.lng, lat: r.lat })),
+        );
+      } catch { /* heartbeat is best-effort */ }
+    };
+    heartbeat();
+    const hbInterval = setInterval(heartbeat, 2500);
 
     /* ── Coin field ── */
     const spawnCoins = () => {
@@ -356,6 +384,28 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         }
       }
 
+      // Keep remote riders' name tags glued to their interpolated positions
+      if (frame % 6 === 0) {
+        const positions = crew.getPositions();
+        const alive = new Set(positions.map((r) => r.id));
+        for (const r of positions) {
+          let tag = remoteTags.get(r.id);
+          if (!tag) {
+            const tagEl = document.createElement('div');
+            tagEl.innerHTML = `<div class="surf-runner-tag" style="border-color:${r.color}">@${r.handle}</div>`;
+            tag = new mapboxgl.Marker({ element: tagEl, anchor: 'bottom', offset: [0, -96] })
+              .setLngLat([r.lng, r.lat])
+              .addTo(map);
+            remoteTags.set(r.id, tag);
+          } else {
+            tag.setLngLat([r.lng, r.lat]);
+          }
+        }
+        for (const [rid, tag] of remoteTags) {
+          if (!alive.has(rid)) { tag.remove(); remoteTags.delete(rid); }
+        }
+      }
+
       runner.setState({ lng: p.lng, lat: p.lat, heading, speed: mag, lean: vx * mag, jump: jumpH });
       map.triggerRepaint();
 
@@ -365,15 +415,20 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
 
     return () => {
       cancelAnimationFrame(raf);
+      clearInterval(hbInterval);
       window.removeEventListener('keydown', onDown);
       window.removeEventListener('keyup', onUp);
       marker.remove();
+      remoteTags.forEach((t) => t.remove());
+      remoteTags.clear();
       obstaclesRef.current.forEach((o) => o.marker.remove());
       obstaclesRef.current = [];
       if (map.getLayer('player-runner')) map.removeLayer('player-runner');
+      if (map.getLayer('crew-runners')) map.removeLayer('crew-runners');
       if (map.getLayer('run-coins-core')) map.removeLayer('run-coins-core');
       if (map.getLayer('run-coins-glow')) map.removeLayer('run-coins-glow');
       if (map.getSource('run-coins')) map.removeSource('run-coins');
+      if (map.getLayer('real-players')) map.setLayoutProperty('real-players', 'visibility', 'visible');
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, player]);
