@@ -14,6 +14,7 @@ export interface RunnerState {
   heading: number; // radians, clockwise from north
   speed: number;   // 0..1
   lean: number;    // -1..1 (left/right input, for roll)
+  jump: number;    // meters above ground
 }
 
 export interface RunnerLayer extends mapboxgl.CustomLayerInterface {
@@ -27,7 +28,7 @@ export interface RunnerLayer extends mapboxgl.CustomLayerInterface {
  * it always loads. Animated run cycle driven by speed; leans into turns.
  */
 export function createRunnerLayer(id: string, accentColor: string): RunnerLayer {
-  const state: RunnerState = { lng: 0, lat: 0, heading: 0, speed: 0, lean: 0 };
+  const state: RunnerState = { lng: 0, lat: 0, heading: 0, speed: 0, lean: 0, jump: 0 };
 
   let renderer: THREE.WebGLRenderer | null = null;
   let scene: THREE.Scene | null = null;
@@ -165,17 +166,30 @@ export function createRunnerLayer(id: string, accentColor: string): RunnerLayer 
       // Pitch forward slightly at speed
       charGroup.rotation.x = speed * 0.12;
 
-      // Run cycle — limbs swing with speed, gentle idle bob otherwise
+      // Run cycle — limbs swing with speed, gentle idle bob otherwise.
+      // Mid-air: tuck the legs, throw the arms up, nose the board skyward.
+      const airborne = state.jump > 0.4;
       const freq = 4 + speed * 8;
       const swing = Math.sin(t * freq) * (0.25 + speed * 0.75);
       if (legL && legR && armL && armR && board) {
-        legL.rotation.x = swing * 0.9 * Math.max(speed, 0.12);
-        legR.rotation.x = -swing * 0.9 * Math.max(speed, 0.12);
-        armL.rotation.x = -swing * 0.7 * Math.max(speed, 0.12);
-        armR.rotation.x = swing * 0.7 * Math.max(speed, 0.12);
-        board.rotation.z = Math.sin(t * 1.6) * 0.05 + state.lean * 0.12;
+        if (airborne) {
+          legL.rotation.x = 0.95;
+          legR.rotation.x = 0.75;
+          armL.rotation.x = -2.4;
+          armR.rotation.x = -2.4;
+          board.rotation.z = state.lean * 0.2;
+        } else {
+          legL.rotation.x = swing * 0.9 * Math.max(speed, 0.12);
+          legR.rotation.x = -swing * 0.9 * Math.max(speed, 0.12);
+          armL.rotation.x = -swing * 0.7 * Math.max(speed, 0.12);
+          armR.rotation.x = swing * 0.7 * Math.max(speed, 0.12);
+          board.rotation.z = Math.sin(t * 1.6) * 0.05 + state.lean * 0.12;
+        }
       }
-      charGroup.position.y = Math.abs(Math.sin(t * freq)) * 0.07 * speed + Math.sin(t * 1.8) * 0.02;
+      if (airborne) charGroup.rotation.x = -0.18; // nose up off the ramp
+      charGroup.position.y =
+        state.jump / UNIT_METERS +
+        (airborne ? 0 : Math.abs(Math.sin(t * freq)) * 0.07 * speed + Math.sin(t * 1.8) * 0.02);
 
       const merc = mapboxgl.MercatorCoordinate.fromLngLat([state.lng, state.lat], 0);
       const scale = merc.meterInMercatorCoordinateUnits() * UNIT_METERS;
