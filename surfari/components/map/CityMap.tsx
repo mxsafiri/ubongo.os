@@ -63,7 +63,8 @@ function buildZonesGeoJSON(zones: typeof DAR_ZONES): GeoJSON.FeatureCollection {
   };
 }
 
-// Volumetric light beams — thin glowing pillars rising from each zone core
+// Volumetric light beams — thin glowing pillars rising from each zone core.
+// Built-up zones (level II–V) grow taller: an empire you can see across town.
 function buildBeamsGeoJSON(zones: typeof DAR_ZONES): GeoJSON.FeatureCollection {
   return {
     type: 'FeatureCollection',
@@ -74,7 +75,7 @@ function buildBeamsGeoJSON(zones: typeof DAR_ZONES): GeoJSON.FeatureCollection {
       properties: {
         id: z.id,
         tierColor: ZONE_TIER_COLORS[z.tier] ?? '#4A5A7A',
-        beamHeight: TIER_BEAM_HEIGHT[z.tier] ?? 450,
+        beamHeight: (TIER_BEAM_HEIGHT[z.tier] ?? 450) + ((z.level ?? 1) - 1) * 180,
       },
     })),
   };
@@ -460,8 +461,8 @@ export default function CityMap() {
           DAR_ZONES.find((z) => z.id === zoneId);
         if (!zone) return;
         state.selectZone(zone);
-        // On desktop, route to surf tab so the sidebar shows zone detail
-        if (window.innerWidth >= 1024) state.setActiveTab('surf');
+        // On desktop, route to surf tab and pop the sidebar open if collapsed
+        if (window.innerWidth >= 1024) { state.setActiveTab('surf'); state.setSidebarCollapsed(false); }
       });
 
       // Beams are big click targets too — tapping a beacon selects its zone
@@ -474,7 +475,7 @@ export default function CityMap() {
           DAR_ZONES.find((z) => z.id === zoneId);
         if (!zone) return;
         state.selectZone(zone);
-        if (window.innerWidth >= 1024) state.setActiveTab('surf');
+        if (window.innerWidth >= 1024) { state.setActiveTab('surf'); state.setSidebarCollapsed(false); }
       });
 
       map.on('mouseenter', 'zones-core', () => { map.getCanvas().style.cursor = 'pointer'; });

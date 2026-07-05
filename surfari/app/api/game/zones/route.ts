@@ -18,7 +18,7 @@ export async function GET() {
              owner_id, owner_handle, owner_color,
              lat::float, lng::float, radius_meters,
              claim_strength, trace_count, contested_threshold,
-             daily_yield, upkeep_cost, created_at
+             daily_yield, upkeep_cost, level, created_at
       FROM zones
       ORDER BY tier, name
     `;
@@ -43,6 +43,7 @@ export async function GET() {
         contested_threshold: row.contested_threshold,
         daily_yield: row.daily_yield,
         upkeep_cost: row.upkeep_cost,
+        level: row.level ?? 1,
         created_at: row.created_at,
         traces: [],
         task_demand: null,

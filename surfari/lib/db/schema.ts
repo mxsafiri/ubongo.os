@@ -46,9 +46,13 @@ export async function ensureSchema() {
       contested_threshold INTEGER DEFAULT 5,
       daily_yield INTEGER NOT NULL,
       upkeep_cost INTEGER NOT NULL,
+      level INTEGER DEFAULT 1,
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `;
+
+  // Add level to existing deployments that predate this column
+  await sql`ALTER TABLE zones ADD COLUMN IF NOT EXISTS level INTEGER DEFAULT 1`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS messages (

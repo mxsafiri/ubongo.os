@@ -25,6 +25,7 @@ interface GameStore {
   mapView: MapViewState;
   mapLoaded: boolean;
   plant_site: { lng: number; lat: number } | null;
+  sidebarCollapsed: boolean;
 
   // Actions
   setPhase: (phase: GamePhase) => void;
@@ -49,6 +50,8 @@ interface GameStore {
   surfZone: (zoneId: string) => Promise<void>;
   setPlantSite: (site: { lng: number; lat: number } | null) => void;
   plantTurf: () => Promise<Zone | null>;
+  buildZone: (zoneId: string) => Promise<boolean>;
+  setSidebarCollapsed: (collapsed: boolean) => void;
 }
 
 export const useGameStore = create<GameStore>()(
@@ -65,6 +68,7 @@ export const useGameStore = create<GameStore>()(
     mapView: DEFAULT_VIEW,
     mapLoaded: false,
     plant_site: null,
+    sidebarCollapsed: false,
 
     setPhase: (phase) => set({ phase }),
 
@@ -190,6 +194,35 @@ export const useGameStore = create<GameStore>()(
 
     setPlantSite: (plant_site) => set({ plant_site }),
 
+    setSidebarCollapsed: (sidebarCollapsed) => set({ sidebarCollapsed }),
+
+    buildZone: async (zoneId: string) => {
+      const { player } = get();
+      if (!player) return false;
+      try {
+        const res = await fetch(`/api/game/zones/${zoneId}/build`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ player_id: player.id }),
+        });
+        if (!res.ok) return false;
+        const { zone: zoneUpdate, player: updatedPlayer } = await res.json();
+        set((state) => ({
+          player: updatedPlayer ?? state.player,
+          nearby_zones: state.nearby_zones.map((z) =>
+            z.id === zoneId ? { ...z, ...zoneUpdate } : z
+          ),
+          selected_zone: state.selected_zone?.id === zoneId
+            ? { ...state.selected_zone, ...zoneUpdate }
+            : state.selected_zone,
+        }));
+        return true;
+      } catch (err) {
+        console.error('buildZone', err);
+        return false;
+      }
+    },
+
     plantTurf: async () => {
       const { player, plant_site } = get();
       if (!player || !plant_site) return null;
@@ -206,6 +239,7 @@ export const useGameStore = create<GameStore>()(
           nearby_zones: [...state.nearby_zones, zone],
           selected_zone: zone,
           plant_site: null,
+    sidebarCollapsed: false,
         }));
         return zone as Zone;
       } catch (err) {
@@ -231,3 +265,4 @@ export const selectMapView = (s: GameStore) => s.mapView;
 export const selectMapLoaded = (s: GameStore) => s.mapLoaded;
 export const selectTheme = (s: GameStore) => s.theme;
 export const selectPlantSite = (s: GameStore) => s.plant_site;
+export const selectSidebarCollapsed = (s: GameStore) => s.sidebarCollapsed;

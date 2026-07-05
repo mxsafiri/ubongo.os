@@ -3,7 +3,8 @@
 import dynamic from 'next/dynamic';
 import { useEffect } from 'react';
 import { AnimatePresence } from 'framer-motion';
-import { useGameStore, selectPhase, selectMapLoaded, selectActiveTab, selectTheme } from '@/store/game';
+import { useGameStore, selectPhase, selectMapLoaded, selectActiveTab, selectTheme, selectSidebarCollapsed, selectUnreadCount } from '@/store/game';
+import { ChevronsLeft } from 'lucide-react';
 import { loadSavedPlayer } from '@/lib/storage';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import Onboarding from '@/components/game/Onboarding';
@@ -27,6 +28,9 @@ export default function SurfariPage() {
   const setPhase = useGameStore((s) => s.setPhase);
   const setPlayer = useGameStore((s) => s.setPlayer);
   const fetchZones = useGameStore((s) => s.fetchZones);
+  const sidebarCollapsed = useGameStore(selectSidebarCollapsed);
+  const unread = useGameStore(selectUnreadCount);
+  const setSidebarCollapsed = useGameStore((s) => s.setSidebarCollapsed);
   const isDesktop = useIsDesktop();
 
   // Restore session from localStorage on first mount (uses player_id — PIN not required)
@@ -101,10 +105,36 @@ export default function SurfariPage() {
           {phase === 'onboarding' && <Onboarding />}
           {showHUD && <PlantFlow />}
           <Toast />
+
+          {/* Re-open HUD when collapsed — floating button over the map */}
+          {showHUD && sidebarCollapsed && (
+            <button
+              onClick={() => setSidebarCollapsed(false)}
+              className="absolute top-4 right-4 z-30 flex items-center gap-2 px-3 py-2"
+              style={{
+                background: 'rgba(9,13,24,0.85)',
+                border: '1px solid rgba(0,194,255,0.35)',
+                backdropFilter: 'blur(10px)',
+                boxShadow: '0 4px 18px rgba(0,0,0,0.4)',
+              }}
+              aria-label="Open HUD"
+            >
+              <ChevronsLeft size={14} style={{ color: '#00C2FF' }} />
+              <span style={{ fontFamily: 'var(--font-arcade)', fontSize: '15px', letterSpacing: '0.14em', color: '#F0F6FF', lineHeight: 1 }}>
+                HUD
+              </span>
+              {unread > 0 && (
+                <span className="w-4 h-4 rounded-full flex items-center justify-center"
+                  style={{ background: 'var(--color-danger)', fontSize: '9px', color: '#fff', fontWeight: 700 }}>
+                  {unread > 9 ? '9+' : unread}
+                </span>
+              )}
+            </button>
+          )}
         </div>
 
-        {/* Right sidebar */}
-        {showHUD && <DesktopSidebar />}
+        {/* Right sidebar — collapsible so the map is the main stage */}
+        {showHUD && !sidebarCollapsed && <DesktopSidebar />}
       </div>
     );
   }

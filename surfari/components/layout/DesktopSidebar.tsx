@@ -1,7 +1,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Waves, Bell, Map, Zap, ListChecks, User, Sun, Moon, Radio, Crosshair, Flag } from 'lucide-react';
+import { Waves, Bell, Map, Zap, ListChecks, User, Sun, Moon, Radio, Crosshair, Flag, ChevronsRight } from 'lucide-react';
 import { useGameStore, selectPlayer, selectActiveTab, selectTheme, selectUnreadCount, selectSelectedZone, selectNearbyZones } from '@/store/game';
 import { formatTokens } from '@/lib/utils';
 import { SurfScreen } from '@/components/screens/SurfScreen';
@@ -92,6 +92,9 @@ export function DesktopSidebar() {
         )}
 
         <div className="flex items-center gap-1.5 flex-shrink-0">
+          <IconBtn onClick={() => useGameStore.getState().setSidebarCollapsed(true)} aria-label="Collapse sidebar — full map">
+            <ChevronsRight size={13} style={{ color: 'var(--text-secondary)' }} />
+          </IconBtn>
           <IconBtn onClick={toggleTheme} aria-label="Toggle theme">
             {theme === 'dark' ? <Sun size={13} style={{ color: 'var(--color-gold)' }} /> : <Moon size={13} style={{ color: 'var(--text-secondary)' }} />}
           </IconBtn>
@@ -299,6 +302,9 @@ function HoldingRow({ zone, onClick }: { zone: Zone; onClick: () => void }) {
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)' }}>{strength}%</span>
         </div>
       </div>
+      <span style={{ fontFamily: 'var(--font-arcade)', fontSize: '13px', letterSpacing: '0.08em', color: 'var(--color-gold)', flexShrink: 0, opacity: 0.85 }}>
+        LVL {['I', 'II', 'III', 'IV', 'V'][(zone.level ?? 1) - 1]}
+      </span>
       <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--color-gold)', flexShrink: 0 }}>
         +{formatTokens(zone.daily_yield)}/d
       </span>
