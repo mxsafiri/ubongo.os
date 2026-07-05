@@ -8,6 +8,7 @@ import { useGameStore } from '@/store/game';
 import { DAR_ZONES, ZONE_TIER_COLORS, ZONE_STATE_COLORS } from '@/lib/game/zones';
 import { MAP_CONFIG } from '@/lib/map/style';
 import { ZonePopup } from '@/components/game/ZonePopup';
+import { SurfRun } from './SurfRun';
 import { selectActiveTab } from '@/store/game';
 
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!;
@@ -394,6 +395,10 @@ export default function CityMap() {
   const selected_zone = useGameStore((s) => s.selected_zone);
   const activeTab = useGameStore(selectActiveTab);
   const [popupPos, setPopupPos] = useState<{ x: number; y: number } | null>(null);
+  const [mapObj, setMapObj] = useState<mapboxgl.Map | null>(null);
+  const [surfMode, setSurfMode] = useState(false);
+  const surfModeRef = useRef(false);
+  surfModeRef.current = surfMode;
   const introDone = useRef(false);
   const prevOwnersRef = useRef<Map<string, string | null>>(new Map());
   const wanderersRef = useRef<{ lng: number; lat: number; heading: number; speed: number; color: string }[]>([]);
@@ -485,13 +490,17 @@ export default function CityMap() {
 
       // Empty-map click → drop a plant-site target (build-your-own-turf flow).
       // Zone layer clicks take priority; only open plant mode on bare ground.
+      // Disabled while riding in Surf Run.
       map.on('click', (e) => {
+        if (surfModeRef.current) return;
         const hits = map.queryRenderedFeatures(e.point, { layers: ['zones-core', 'zones-beam'] });
         if (hits.length > 0) return;
         const state = useGameStore.getState();
         if (!state.player) return;
         state.setPlantSite({ lng: e.lngLat.lng, lat: e.lngLat.lat });
       });
+
+      setMapObj(map);
 
       setMapLoaded(true);
     });
@@ -575,16 +584,19 @@ export default function CityMap() {
       return;
     }
 
-    // Cinematic approach — swoop in low with a slight orbit toward the beacon
-    map.flyTo({
-      center: [selected_zone.lng, selected_zone.lat],
-      zoom: Math.max(map.getZoom(), 15.6),
-      pitch: 62,
-      bearing: map.getBearing() + 18,
-      duration: 1500,
-      curve: 1.4,
-      essential: true,
-    });
+    // Cinematic approach — swoop in low with a slight orbit toward the beacon.
+    // Skipped in Surf Run: the chase cam owns the camera while riding.
+    if (!surfModeRef.current) {
+      map.flyTo({
+        center: [selected_zone.lng, selected_zone.lat],
+        zoom: Math.max(map.getZoom(), 15.6),
+        pitch: 62,
+        bearing: map.getBearing() + 18,
+        duration: 1500,
+        curve: 1.4,
+        essential: true,
+      });
+    }
 
     const updatePos = () => {
       const pt = map.project([selected_zone.lng, selected_zone.lat]);
@@ -662,9 +674,38 @@ export default function CityMap() {
     });
   }, [nearby_players]);
 
+  const player = useGameStore((s) => s.player);
+
   return (
     <div className="absolute inset-0" style={{ background: '#0A0E1A' }}>
       <div ref={mapContainer} className="absolute inset-0 w-full h-full" />
+
+      {/* Surf Run toggle — ride the city as your avatar */}
+      {player && mapObj && !surfMode && (
+        <button
+          onClick={() => setSurfMode(true)}
+          className="absolute z-30 flex items-center gap-2 px-3.5 py-2.5"
+          style={{
+            right: 16,
+            bottom: 'calc(var(--screen-pad-bottom, 24px) + 16px)',
+            background: 'rgba(9,13,24,0.85)',
+            border: '1px solid rgba(0,224,150,0.45)',
+            backdropFilter: 'blur(10px)',
+            boxShadow: '0 4px 18px rgba(0,0,0,0.45), 0 0 20px rgba(0,224,150,0.15)',
+          }}
+          aria-label="Enter Surf Run"
+        >
+          <span style={{ fontSize: '17px', lineHeight: 1 }}>🏄</span>
+          <span style={{ fontFamily: 'var(--font-arcade)', fontSize: '16px', letterSpacing: '0.14em', color: '#00E096', lineHeight: 1 }}>
+            SURF RUN
+          </span>
+        </button>
+      )}
+
+      {surfMode && mapObj && (
+        <SurfRun map={mapObj} onExit={() => setSurfMode(false)} />
+      )}
+
       {/* Floating popup — mobile only; desktop uses the sidebar */}
       <AnimatePresence>
         {selected_zone && popupPos && activeTab === 'map' && typeof window !== 'undefined' && window.innerWidth < 1024 && (
