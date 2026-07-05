@@ -4,12 +4,15 @@ import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import { useGameStore } from '@/store/game';
 import { sfx } from '@/lib/game/sfx';
+import { createRunnerLayer } from './RunnerLayer';
 
 const SPEED_MPS = 65;          // fun > realism — boda at full throttle
 const COIN_VALUE = 25;
 const COIN_COUNT = 26;
-const COIN_COLLECT_M = 32;
+const COIN_COLLECT_M = 34;
 const COIN_FIELD_M = 900;      // coins scatter within this radius of the runner
+const CHASE_ZOOM = 16.6;
+const CHASE_PITCH = 66;
 
 const M_PER_DEG_LAT = 110574;
 
@@ -25,10 +28,19 @@ function distM(aLng: number, aLat: number, bLng: number, bLat: number) {
   return Math.hypot(dx, dy);
 }
 
+// Shortest-arc lerp for compass bearings (degrees)
+function lerpBearing(from: number, to: number, k: number) {
+  let d = to - from;
+  while (d > 180) d -= 360;
+  while (d < -180) d += 360;
+  return from + d * k;
+}
+
 /**
- * SurfRun — Subway-Surfers-style avatar mode. Drive your runner through the
- * living city: WASD / arrows on desktop, thumb joystick on mobile. Chase cam
- * follows. Hoover Tide coins; run into a zone beacon to engage it.
+ * SurfRun — Subway-Surfers-style avatar mode with a real 3D character.
+ * A Three.js custom layer renders an animated low-poly runner inside the
+ * map's WebGL scene. Hold up to ride, steer left/right — the chase cam
+ * banks behind you. Hoover Tide coins; ride into a beacon to engage it.
  */
 export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void }) {
   const player = useGameStore((s) => s.player);
@@ -48,20 +60,25 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     const center = map.getCenter();
     posRef.current = { lng: center.lng, lat: center.lat };
 
-    /* ── Avatar marker ── */
+    /* ── 3D character layer ── */
+    const runner = createRunnerLayer('player-runner', player.avatar_color);
+    if (!map.getLayer('player-runner')) map.addLayer(runner);
+    runner.setState({ lng: center.lng, lat: center.lat, heading: (map.getBearing() * Math.PI) / 180, speed: 0, lean: 0 });
+
+    // Drop into chase framing
+    map.easeTo({
+      zoom: Math.max(map.getZoom(), CHASE_ZOOM),
+      pitch: CHASE_PITCH,
+      duration: 900,
+      essential: true,
+    });
+
+    /* ── Handle tag above the character ── */
     const el = document.createElement('div');
-    el.innerHTML = `
-      <div class="surf-runner">
-        <div class="surf-runner-tag">@${player.handle}</div>
-        <div class="surf-runner-body" style="background:${player.avatar_color};box-shadow:0 0 22px ${player.avatar_color}cc, 0 4px 10px rgba(0,0,0,0.5)">
-          <span class="surf-runner-emoji">🏄</span>
-        </div>
-        <div class="surf-runner-shadow"></div>
-      </div>`;
-    const marker = new mapboxgl.Marker({ element: el, anchor: 'bottom' })
+    el.innerHTML = `<div class="surf-runner-tag">@${player.handle}</div>`;
+    const marker = new mapboxgl.Marker({ element: el, anchor: 'bottom', offset: [0, -96] })
       .setLngLat([center.lng, center.lat])
       .addTo(map);
-    const bodyEl = el.querySelector('.surf-runner-body') as HTMLElement | null;
 
     /* ── Coin field ── */
     const spawnCoins = () => {
@@ -145,6 +162,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     let raf: number;
     let lastTs = performance.now();
     let frame = 0;
+    let heading = (map.getBearing() * Math.PI) / 180;
 
     const tick = (ts: number) => {
       const dt = Math.min((ts - lastTs) / 1000, 0.05);
@@ -159,24 +177,21 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         vy = -joyRef.current.y;
       }
       const mag = Math.min(Math.hypot(vx, vy), 1);
+      const p = posRef.current;
 
       if (mag > 0.05) {
-        // Screen-relative movement: "up" runs toward the top of the screen
+        // Screen-relative input: "up" rides toward the top of the screen.
+        // The chase cam then banks toward the heading, so held-left/right
+        // becomes a carving turn — Subway Surfers steering for free.
         const bearingRad = (map.getBearing() * Math.PI) / 180;
-        const headingRad = Math.atan2(vx, vy) + bearingRad;
+        heading = Math.atan2(vx, vy) + bearingRad;
         const step = SPEED_MPS * dt * mag;
-        const p = posRef.current;
-        p.lat += (Math.cos(headingRad) * step) / M_PER_DEG_LAT;
-        p.lng += (Math.sin(headingRad) * step) / metersPerDegLng(p.lat);
+        p.lat += (Math.cos(heading) * step) / M_PER_DEG_LAT;
+        p.lng += (Math.sin(heading) * step) / metersPerDegLng(p.lat);
 
         marker.setLngLat([p.lng, p.lat]);
-        map.jumpTo({ center: [p.lng, p.lat] });
-
-        // Lean into the turn
-        if (bodyEl) {
-          const lean = Math.max(-16, Math.min(16, vx * 14));
-          bodyEl.style.transform = `rotate(${lean}deg) ${vx < -0.2 ? 'scaleX(-1)' : ''}`;
-        }
+        const newBearing = lerpBearing(map.getBearing(), (heading * 180) / Math.PI, 0.06);
+        map.jumpTo({ center: [p.lng, p.lat], bearing: newBearing });
 
         // Coin pickup
         const before = coinsRef.current.length;
@@ -192,7 +207,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
           if (coinsRef.current.length === 0) spawnCoins();
         }
 
-        // Zone proximity — running into a beacon engages the zone
+        // Zone proximity — riding into a beacon engages the zone
         if (frame % 12 === 0) {
           const state = useGameStore.getState();
           for (const z of state.nearby_zones) {
@@ -207,9 +222,10 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
             }
           }
         }
-      } else if (bodyEl) {
-        bodyEl.style.transform = '';
       }
+
+      runner.setState({ lng: p.lng, lat: p.lat, heading, speed: mag, lean: vx * mag });
+      map.triggerRepaint(); // keep the character animating even when idle
 
       raf = requestAnimationFrame(tick);
     };
@@ -220,6 +236,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       window.removeEventListener('keydown', onDown);
       window.removeEventListener('keyup', onUp);
       marker.remove();
+      if (map.getLayer('player-runner')) map.removeLayer('player-runner');
       if (map.getLayer('run-coins-core')) map.removeLayer('run-coins-core');
       if (map.getLayer('run-coins-glow')) map.removeLayer('run-coins-glow');
       if (map.getSource('run-coins')) map.removeSource('run-coins');
@@ -256,25 +273,12 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
   return (
     <>
       <style>{`
-        .surf-runner { display:flex; flex-direction:column; align-items:center; pointer-events:none; }
         .surf-runner-tag {
           font-family: var(--font-mono); font-size:10px; font-weight:700; color:#fff;
-          background:rgba(9,13,24,0.85); padding:2px 7px; margin-bottom:4px;
+          background:rgba(9,13,24,0.85); padding:2px 7px;
           border:1px solid rgba(255,255,255,0.25); letter-spacing:0.04em; white-space:nowrap;
+          pointer-events:none;
         }
-        .surf-runner-body {
-          width:38px; height:38px; border-radius:50%;
-          display:flex; align-items:center; justify-content:center;
-          border:2.5px solid rgba(255,255,255,0.9);
-          animation: surf-bob 0.55s ease-in-out infinite alternate;
-          transition: transform 0.15s ease;
-        }
-        .surf-runner-emoji { font-size:21px; line-height:1; }
-        .surf-runner-shadow {
-          width:26px; height:7px; border-radius:50%;
-          background:rgba(0,0,0,0.45); filter:blur(2px); margin-top:2px;
-        }
-        @keyframes surf-bob { from { translate:0 0; } to { translate:0 -5px; } }
       `}</style>
 
       {/* Run HUD chip */}
@@ -301,7 +305,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       {/* Desktop key hint */}
       <p className="hidden lg:block absolute bottom-5 left-1/2 -translate-x-1/2 z-30 pointer-events-none"
         style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.25em', color: 'rgba(240,246,255,0.55)', textShadow: '0 1px 6px rgba(0,0,0,0.8)' }}>
-        WASD / ARROWS TO RIDE · RUN INTO A BEACON TO BATTLE · ESC TO EXIT
+        HOLD ↑ TO RIDE · ← → TO CARVE · RUN INTO A BEACON TO BATTLE · ESC TO EXIT
       </p>
 
       {/* Mobile joystick */}
