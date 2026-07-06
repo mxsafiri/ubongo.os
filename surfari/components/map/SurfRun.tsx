@@ -16,10 +16,12 @@ const DECEL_RATE = 2.8;       // coast friction
 const BRAKE_RATE = 6.5;       // hard brake
 const TURN_RATE = 2.5;        // rad/s at full steer
 
-/* ── Chase camera (Subway Surfers framing: behind, above, looking ahead) ── */
-const CAM_BACK_M = 62;
-const CAM_ALT_M = 34;
-const LOOK_AHEAD_M = 28;
+/* ── Chase camera (Subway Surfers framing: behind, above, looking ahead).
+       Steep ~45° down-angle so buildings rarely occlude the character and
+       the runner always sits in the lower third of the frame. ── */
+const CAM_BACK_M = 50;
+const CAM_ALT_M = 46;
+const LOOK_AHEAD_M = 12;
 const CAM_POS_RATE = 3.2;     // camera position smoothing
 const CAM_TGT_RATE = 6.0;     // look-target smoothing
 
@@ -102,6 +104,24 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
   const knobRef = useRef<HTMLDivElement>(null);
   const endedRef = useRef(false);
 
+  // Snap the chase camera directly behind the runner — no smoothing.
+  // The one-tap answer to "where am I?"
+  const recenter = useCallback(() => {
+    const p = posRef.current;
+    const mLng = metersPerDegLng(p.lat);
+    const fx = Math.sin(headingRef.current);
+    const fy = Math.cos(headingRef.current);
+    camPosRef.current = {
+      lng: p.lng - (fx * CAM_BACK_M) / mLng,
+      lat: p.lat - (fy * CAM_BACK_M) / M_PER_DEG_LAT,
+    };
+    camTgtRef.current = {
+      lng: p.lng + (fx * LOOK_AHEAD_M) / mLng,
+      lat: p.lat + (fy * LOOK_AHEAD_M) / M_PER_DEG_LAT,
+    };
+    sfx.whoosh();
+  }, []);
+
   const doJump = useCallback(() => {
     if (jumpStartRef.current === 0 && performance.now() >= stunUntilRef.current) {
       jumpStartRef.current = performance.now();
@@ -162,6 +182,14 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       };
       camYawRef.current = headingRef.current;
     }
+
+    // The game owns the camera during a run — stop map gestures from
+    // fighting it (drag/zoom jitter was disorienting riders)
+    map.dragPan.disable();
+    map.dragRotate.disable();
+    map.scrollZoom.disable();
+    map.touchZoomRotate.disable();
+    map.doubleClickZoom.disable();
 
     /* ── 3D character layer ── */
     const runner = createRunnerLayer('player-runner', player.avatar_color);
@@ -298,6 +326,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         case 'ArrowLeft': case 'a': case 'A': k.left = down; break;
         case 'ArrowRight': case 'd': case 'D': k.right = down; break;
         case ' ': if (down) doJump(); e.preventDefault(); return;
+        case 'r': case 'R': if (down) recenter(); return;
         case 'Escape': if (down) endRunRef.current(); return;
         default: return;
       }
@@ -539,6 +568,12 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       if (map.getLayer('run-coins-glow')) map.removeLayer('run-coins-glow');
       if (map.getSource('run-coins')) map.removeSource('run-coins');
       if (map.getLayer('real-players')) map.setLayoutProperty('real-players', 'visibility', 'visible');
+      // Give the player their map gestures back
+      map.dragPan.enable();
+      map.dragRotate.enable();
+      map.scrollZoom.enable();
+      map.touchZoomRotate.enable();
+      map.doubleClickZoom.enable();
       // Hand the camera back to the normal map view
       map.easeTo({
         center: [posRef.current.lng, posRef.current.lat],
@@ -642,11 +677,19 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
             BOOST {bodaLeft.toFixed(0)}s
           </span>
         )}
+        <button onClick={recenter} aria-label="Recenter camera on your runner"
+          style={{
+            fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.15em',
+            color: '#00C2FF', border: '1px solid rgba(0,194,255,0.35)',
+            padding: '3px 7px', marginLeft: 4, background: 'none',
+          }}>
+          ⌖ FIND ME
+        </button>
         <button onClick={endRun} aria-label="Exit surf run"
           style={{
             fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.15em',
             color: '#8BA3BE', border: '1px solid rgba(240,246,255,0.18)',
-            padding: '3px 7px', marginLeft: 4, background: 'none',
+            padding: '3px 7px', background: 'none',
           }}>
           END RUN
         </button>
@@ -655,7 +698,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       {/* Desktop key hint */}
       <p className="hidden lg:block absolute bottom-5 left-1/2 -translate-x-1/2 z-30 pointer-events-none"
         style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.25em', color: 'rgba(240,246,255,0.55)', textShadow: '0 1px 6px rgba(0,0,0,0.8)' }}>
-        ↑ THROTTLE · ← → STEER · ↓ BRAKE · SPACE JUMP · GRAB A 🛵 FOR BOOST · ESC TO END
+        ↑ THROTTLE · ← → STEER · ↓ BRAKE · SPACE JUMP · R FIND ME · GRAB A 🛵 FOR BOOST · ESC TO END
       </p>
 
       {/* Mobile joystick */}
