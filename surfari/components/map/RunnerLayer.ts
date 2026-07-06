@@ -2,7 +2,7 @@
 
 import * as THREE from 'three';
 import mapboxgl from 'mapbox-gl';
-import { buildCharacter, animateCharacter, addCharacterLights, disposeScene, type CharParts } from './runnerModel';
+import { buildCharacter, animateCharacter, addCharacterLights, disposeScene, type CharParts, type RideMode } from './runnerModel';
 
 // Character proportions are in "model units" (~1.8 units tall);
 // UNIT_METERS scales one unit to city meters. ~13m tall total — big enough
@@ -16,6 +16,7 @@ export interface RunnerState {
   speed: number;   // 0..1
   lean: number;    // -1..1 (left/right input, for roll)
   jump: number;    // meters above ground
+  mode: RideMode;  // 'board' | 'boda'
 }
 
 export interface RunnerLayer extends mapboxgl.CustomLayerInterface {
@@ -27,7 +28,7 @@ export interface RunnerLayer extends mapboxgl.CustomLayerInterface {
  * inside the Mapbox WebGL scene, depth-tested against 3D buildings.
  */
 export function createRunnerLayer(id: string, accentColor: string): RunnerLayer {
-  const state: RunnerState = { lng: 0, lat: 0, heading: 0, speed: 0, lean: 0, jump: 0 };
+  const state: RunnerState = { lng: 0, lat: 0, heading: 0, speed: 0, lean: 0, jump: 0, mode: 'board' };
 
   let renderer: THREE.WebGLRenderer | null = null;
   let scene: THREE.Scene | null = null;
@@ -80,7 +81,7 @@ export function createRunnerLayer(id: string, accentColor: string): RunnerLayer 
       smoothHeading += dh * 0.18;
 
       parts.group.rotation.y = -smoothHeading;
-      animateCharacter(parts, t, state.speed, state.lean, state.jump, UNIT_METERS);
+      animateCharacter(parts, t, state.speed, state.lean, state.jump, UNIT_METERS, state.mode);
 
       const merc = mapboxgl.MercatorCoordinate.fromLngLat([state.lng, state.lat], 0);
       const scale = merc.meterInMercatorCoordinateUnits() * UNIT_METERS;
