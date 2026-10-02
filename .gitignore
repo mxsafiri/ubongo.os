@@ -74,3 +74,6 @@ build/
 tmp/
 temp/
 *.tmp
+
+# Next.js routes named build/ are source, not build output
+!surfari/app/**/build/
