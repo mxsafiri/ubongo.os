@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BuildingIndex, COLLIDE, collide, isBlocked, makeFootprint, pointInRing, resolveRider } from '@/components/map/collision';
+import { BuildingIndex, COLLIDE, clearDistance, collide, findOpenSpot, isBlocked, makeFootprint, openHeading, pointInRing, resolveRider } from '@/components/map/collision';
 
 // A 40 × 40 m block whose west wall is x = 20, spanning y = -20..20
 const square = (cx: number, cy: number, half: number, h: number | null = 30) =>
@@ -119,5 +119,36 @@ describe('rider response', () => {
     ]);
     const r = resolveRider(idx, { x: 18, y: 18, heading: NORTH_EAST, speed: 15 });
     expect(collide(idx, r.x, r.y, COLLIDE.RIDER_RADIUS_M)).toBeNull();
+  });
+});
+
+describe('camera and spawn helpers', () => {
+  it('measures open distance up to the first tall wall', () => {
+    // East from the origin, the 30 m block starts at x = 20
+    expect(clearDistance(index, 0, 0, 1, 0, 100, 1)).toBe(19);
+    // Looking west there's nothing
+    expect(clearDistance(index, 0, 0, -1, 0, 100, 1)).toBe(100);
+  });
+
+  it('sees over buildings lower than the camera', () => {
+    // North is the 6 m block (y = 40..80): it blocks a camera at 4 m, not one at 10 m
+    expect(clearDistance(index, 0, 0, 0, 1, 100, 1, 4)).toBe(39);
+    expect(clearDistance(index, 0, 0, 0, 1, 100, 1, 10)).toBe(100);
+  });
+
+  it('moves a rider who starts inside a building out to open ground', () => {
+    const spot = findOpenSpot(index, 40, 0)!;
+    expect(spot).not.toBeNull();
+    expect(isBlocked(index, spot.x, spot.y, COLLIDE.RIDER_RADIUS_M)).toBe(false);
+    // …and leaves a rider who's already clear exactly where they are
+    expect(findOpenSpot(index, -30, 0)).toEqual({ x: -30, y: 0 });
+  });
+
+  it('points a fresh ride down open road, not into a wall', () => {
+    // Facing east at a wall 20 m away: turn to somewhere with a long run
+    const h = openHeading(index, 0, 0, EAST);
+    expect(clearDistance(index, 0, 0, Math.sin(h), Math.cos(h), 240, 4)).toBeGreaterThan(200);
+    // Already facing open road: keep it
+    expect(openHeading(index, 0, 0, -EAST)).toBeCloseTo(-EAST);
   });
 });

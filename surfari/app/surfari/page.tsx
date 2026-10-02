@@ -3,7 +3,7 @@
 import dynamic from 'next/dynamic';
 import { useEffect } from 'react';
 import { AnimatePresence } from 'framer-motion';
-import { useGameStore, selectPhase, selectMapLoaded, selectActiveTab, selectTheme, selectSidebarCollapsed, selectUnreadCount } from '@/store/game';
+import { useGameStore, selectPhase, selectMapLoaded, selectActiveTab, selectTheme, selectSidebarCollapsed, selectUnreadCount, selectRiding } from '@/store/game';
 import { ChevronsLeft } from 'lucide-react';
 import { loadSavedPlayer } from '@/lib/storage';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
@@ -32,6 +32,7 @@ export default function SurfariPage() {
   const sidebarCollapsed = useGameStore(selectSidebarCollapsed);
   const unread = useGameStore(selectUnreadCount);
   const setSidebarCollapsed = useGameStore((s) => s.setSidebarCollapsed);
+  const riding = useGameStore(selectRiding);
   const isDesktop = useIsDesktop();
 
   // Restore session from localStorage on first mount (uses player_id — PIN not required)
@@ -75,6 +76,8 @@ export default function SurfariPage() {
   }, [phase, fetchZones]);
 
   const showHUD = phase === 'exploring' || phase === 'surfing' || phase === 'challenge' || phase === 'result';
+  // Cruise Mode: while riding, the ride is the whole screen — menus come back on pause
+  const showMenus = showHUD && !riding;
 
   // Turf pays out continuously; pull the settled balance every minute
   useEffect(() => {
@@ -95,7 +98,7 @@ export default function SurfariPage() {
     return () => clearTimeout(t);
   }, [phase, setPhase]);
 
-  const mapActive = !isDesktop && (activeTab === 'map' || activeTab === 'explore');
+  const mapActive = !isDesktop && (riding || activeTab === 'map' || activeTab === 'explore');
 
   /* ── Desktop layout ── */
   if (isDesktop) {
@@ -120,11 +123,11 @@ export default function SurfariPage() {
             </div>
           )}
           {phase === 'onboarding' && <Onboarding />}
-          {showHUD && <PlantFlow />}
-          <Toast />
+          {showMenus && <PlantFlow />}
+          {!riding && <Toast />}
 
           {/* Re-open HUD when collapsed — floating button over the map */}
-          {showHUD && sidebarCollapsed && (
+          {showMenus && sidebarCollapsed && (
             <button
               onClick={() => setSidebarCollapsed(false)}
               className="absolute top-4 right-4 z-30 flex items-center gap-2 px-3 py-2"
@@ -151,12 +154,12 @@ export default function SurfariPage() {
         </div>
 
         {/* Right sidebar — collapsible so the map is the main stage */}
-        {showHUD && !sidebarCollapsed && <DesktopSidebar />}
+        {showMenus && !sidebarCollapsed && <DesktopSidebar />}
       </div>
     );
   }
 
-  /* ── Mobile layout (unchanged) ── */
+  /* ── Mobile layout ── */
   return (
     <div className="surfari-root">
       <div
@@ -189,7 +192,7 @@ export default function SurfariPage() {
 
       {phase === 'onboarding' && <Onboarding />}
 
-      {showHUD && (
+      {showMenus && (
         <AnimatePresence mode="wait">
           {activeTab === 'surf'    && <SurfScreen key="surf" />}
           {activeTab === 'explore' && <ExploreScreen key="explore" />}
@@ -198,10 +201,10 @@ export default function SurfariPage() {
         </AnimatePresence>
       )}
 
-      {showHUD && <PlantFlow />}
-      {showHUD && <CityChat />}
-      {showHUD && <Toast />}
-      {showHUD && <HUD />}
+      {showMenus && <PlantFlow />}
+      {showMenus && <CityChat />}
+      {showMenus && <Toast />}
+      {showMenus && <HUD />}
     </div>
   );
 }

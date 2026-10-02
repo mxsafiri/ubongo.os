@@ -2,6 +2,7 @@
 
 import mapboxgl from 'mapbox-gl';
 import { BuildingIndex, makeFootprint, type Footprint } from './collision';
+import { BUILDINGS_METADATA_KEY } from '@/lib/map/fallbackStyle';
 
 // Feeds building footprints from the live map into a collision index.
 //
@@ -56,7 +57,9 @@ export function createBuildingSource(
   const buildingLayers = () => {
     if (opts.layerIds) return opts.layerIds.filter((id) => map.getLayer(id));
     return (map.getStyle()?.layers ?? [])
-      .filter((l) => l.type === 'fill-extrusion' && (l as { 'source-layer'?: string })['source-layer'] === 'building')
+      .filter((l) => l.type === 'fill-extrusion' && (
+        (l as { 'source-layer'?: string })['source-layer'] === 'building'
+        || !!(l.metadata as Record<string, unknown> | undefined)?.[BUILDINGS_METADATA_KEY]))
       .map((l) => l.id);
   };
 

@@ -10,15 +10,17 @@ import { MAP_CONFIG } from '@/lib/map/style';
 import { ZonePopup } from '@/components/game/ZonePopup';
 import dynamic from 'next/dynamic';
 import { setMapPixelRatioCap } from '@/lib/map/pixelRatio';
+import { fallbackStyle, hasMapboxToken } from '@/lib/map/fallbackStyle';
 
 // Surf Run brings three.js, the model loader and the game loop — load it
 // only when needed (and prefetch it once the map is up), so the map paints
 // sooner on phones.
 const loadSurfRun = () => import('./SurfRun');
 const SurfRun = dynamic(() => loadSurfRun().then((m) => m.SurfRun), { ssr: false });
-import { selectActiveTab } from '@/store/game';
+import { selectActiveTab, selectPhase, selectRiding } from '@/store/game';
 
-mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!;
+// Without a token (local dev, UI tests) fall back to a self-contained style
+mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || 'no-token-offline-style';
 
 // Real-time Dar es Salaam (EAT, UTC+3) light cycle
 function darLightPreset(): 'dawn' | 'day' | 'dusk' | 'night' {
@@ -403,9 +405,13 @@ export default function CityMap() {
   const activeTab = useGameStore(selectActiveTab);
   const [popupPos, setPopupPos] = useState<{ x: number; y: number } | null>(null);
   const [mapObj, setMapObj] = useState<mapboxgl.Map | null>(null);
-  const [surfMode, setSurfMode] = useState(false);
+  const surfMode = useGameStore(selectRiding);
+  const setSurfMode = useGameStore((s) => s.setRiding);
+  const phase = useGameStore(selectPhase);
   const surfModeRef = useRef(false);
   surfModeRef.current = surfMode;
+  const [introFinished, setIntroFinished] = useState(false);
+  const autoRode = useRef(false);
   const introDone = useRef(false);
   const prevOwnersRef = useRef<Map<string, string | null>>(new Map());
   const wanderersRef = useRef<{ lng: number; lat: number; heading: number; speed: number; color: string }[]>([]);
@@ -417,14 +423,14 @@ export default function CityMap() {
     setMapPixelRatioCap(2);
     const map = new mapboxgl.Map({
       container: mapContainer.current,
-      style: 'mapbox://styles/mapbox/standard',
-      config: {
+      style: hasMapboxToken() ? 'mapbox://styles/mapbox/standard' : fallbackStyle(),
+      config: hasMapboxToken() ? {
         basemap: {
           lightPreset: darLightPreset(),
           showPointOfInterestLabels: false,
           showTransitLabels: false,
         },
-      },
+      } : undefined,
       // Start high and flat — the intro flight brings us down into the city
       center: [mapView.longitude, mapView.latitude],
       zoom: Math.min(mapView.zoom, 11.8),
@@ -454,6 +460,9 @@ export default function CityMap() {
           curve: 1.6,
           essential: true,
         });
+        map.once('moveend', () => setIntroFinished(true));
+      } else {
+        setIntroFinished(true);
       }
 
       // Breathing beacons — beams pulse slowly like a heartbeat
@@ -522,12 +531,15 @@ export default function CityMap() {
     });
 
     // Fallback — mark loaded even on style error so the UI isn't stuck
-    map.on('error', () => setMapLoaded(true));
+    map.on('error', (e) => {
+      console.warn('map error:', (e as { error?: Error }).error?.message ?? e);
+      setMapLoaded(true);
+    });
 
     // Follow real Dar es Salaam time — re-check the light preset every 5 minutes
     const lightInterval = setInterval(() => {
       try {
-        map.setConfigProperty('basemap', 'lightPreset', darLightPreset());
+        if (hasMapboxToken()) map.setConfigProperty('basemap', 'lightPreset', darLightPreset());
       } catch { /* style not ready yet */ }
     }, 5 * 60 * 1000);
 
@@ -692,28 +704,36 @@ export default function CityMap() {
 
   const player = useGameStore((s) => s.player);
 
+  // Riding is the home screen: once the intro flight lands and the player
+  // is in, drop straight into a ride (once per visit — after pausing, the
+  // map stays until they choose to ride again)
+  useEffect(() => {
+    if (autoRode.current || !introFinished || !mapObj || !player || phase !== 'exploring') return;
+    autoRode.current = true;
+    setSurfMode(true);
+  }, [introFinished, mapObj, player, phase, setSurfMode]);
+
   return (
     <div className="absolute inset-0" style={{ background: '#0A0E1A' }}>
       <div ref={mapContainer} className="absolute inset-0 w-full h-full" />
 
-      {/* Surf Run toggle — ride the city as your avatar */}
+      {/* Ride — drop back into Cruise Mode from the map */}
       {player && mapObj && !surfMode && (
         <button
           onClick={() => setSurfMode(true)}
-          className="absolute z-30 flex items-center gap-2 px-3.5 py-2.5"
+          className="absolute z-30 flex items-center gap-2 px-4 py-3"
           style={{
-            right: 16,
+            left: 16, // the chat button owns the right corner
             bottom: 'calc(var(--screen-pad-bottom, 24px) + 16px)',
-            background: 'rgba(9,13,24,0.85)',
-            border: '1px solid rgba(0,224,150,0.45)',
-            backdropFilter: 'blur(10px)',
-            boxShadow: '0 4px 18px rgba(0,0,0,0.45), 0 0 20px rgba(0,224,150,0.15)',
+            borderRadius: 14,
+            background: 'linear-gradient(135deg, rgba(0,224,150,0.95), rgba(0,194,255,0.95))',
+            boxShadow: '0 6px 22px rgba(0,0,0,0.45), 0 0 24px rgba(0,224,150,0.3)',
           }}
-          aria-label="Enter Surf Run"
+          aria-label="Start riding"
         >
-          <span style={{ fontSize: '17px', lineHeight: 1 }}>🏄</span>
-          <span style={{ fontFamily: 'var(--font-arcade)', fontSize: '16px', letterSpacing: '0.14em', color: '#00E096', lineHeight: 1 }}>
-            SURF RUN
+          <span style={{ fontSize: '18px', lineHeight: 1 }}>🏄</span>
+          <span style={{ fontFamily: 'var(--font-arcade)', fontSize: '18px', letterSpacing: '0.14em', color: '#04121C', lineHeight: 1 }}>
+            RIDE
           </span>
         </button>
       )}
@@ -724,7 +744,7 @@ export default function CityMap() {
 
       {/* Floating popup — mobile only; desktop uses the sidebar */}
       <AnimatePresence>
-        {selected_zone && popupPos && activeTab === 'map' && typeof window !== 'undefined' && window.innerWidth < 1024 && (
+        {selected_zone && popupPos && !surfMode && activeTab === 'map' && typeof window !== 'undefined' && window.innerWidth < 1024 && (
           <ZonePopup
             key={selected_zone.id}
             zone={selected_zone}
