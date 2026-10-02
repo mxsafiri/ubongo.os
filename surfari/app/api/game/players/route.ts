@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db/client';
 import { ensureSchema } from '@/lib/db/schema';
 import { publicPlayer, settleYield } from '@/lib/game/economy';
+import { STARTING_TIDE } from '@/lib/game/balance';
 
 // Logging in pays out whatever the player's turf earned while they were away.
 // Background balance syncs pass touch=false: last_active drives the live
@@ -57,8 +58,8 @@ export async function POST(req: NextRequest) {
       }
       const pin_hash = hashPin(String(pin), h);
       const [player] = await sql`
-        INSERT INTO players (handle, avatar_color, avatar_pattern, pin_hash, geo_lat, geo_lng)
-        VALUES (${h}, ${avatar_color ?? '#00C2FF'}, ${avatar_pattern ?? 'waves'}, ${pin_hash}, ${geo_lat ?? null}, ${geo_lng ?? null})
+        INSERT INTO players (handle, avatar_color, avatar_pattern, pin_hash, geo_lat, geo_lng, tide_tokens)
+        VALUES (${h}, ${avatar_color ?? '#00C2FF'}, ${avatar_pattern ?? 'waves'}, ${pin_hash}, ${geo_lat ?? null}, ${geo_lng ?? null}, ${STARTING_TIDE})
         RETURNING *
       `;
       return NextResponse.json({ player: publicPlayer(player), returning: false, yield_collected: 0 });

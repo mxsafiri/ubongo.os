@@ -8,6 +8,7 @@ import * as build from '@/app/api/game/zones/[id]/build/route';
 import * as zones from '@/app/api/game/zones/route';
 import * as runs from '@/app/api/game/runs/route';
 import * as finish from '@/app/api/game/runs/[id]/finish/route';
+import { MAX_TURFS_PER_PLAYER, PLANT_COST, STARTING_TIDE } from '@/lib/game/balance';
 
 // Server-side Tide economy against a real Postgres, through the real routes
 // and the real Neon driver. Run with TEST_DATABASE_URL=postgres://… npm test
@@ -149,9 +150,44 @@ describe.skipIf(!TEST_DB)('Tide economy (Postgres)', () => {
     expect(a).toMatchObject({ speed: 200, turn: null, mode: 'board', heading: null });
   });
 
-  it('plants turf without leaking the PIN hash', async () => {
-    const r = await call(zones.POST as Handler, { player_id: B, lat: -6.8, lng: 39.27 });
-    expect(r.status).toBe(200);
-    expect(r.body.player).not.toHaveProperty('pin_hash');
+  describe('starting balance and planting', () => {
+    let C = '';
+    beforeAll(async () => {
+      C = (await call(players.POST as Handler, { handle: 'charlie', pin: '1234' })).body.player.id;
+    });
+
+    it(`new players start with ${STARTING_TIDE} Tide`, async () => {
+      expect(await tokens(C)).toBe(STARTING_TIDE);
+    });
+
+    it(`planting charges ${PLANT_COST}, into the ledger, without leaking the PIN hash`, async () => {
+      const r = await call(zones.POST as Handler, { player_id: C, lat: -6.8, lng: 39.27 });
+      expect(r.status).toBe(200);
+      expect(r.body.zone.name).toBe("charlie's Turf");
+      expect(r.body.player).not.toHaveProperty('pin_hash');
+      expect(await tokens(C)).toBe(STARTING_TIDE - PLANT_COST);
+      expect(await ledger(C, 'plant')).toBe(-PLANT_COST);
+    });
+
+    it("can't plant without the Tide, and nothing is charged or planted", async () => {
+      await q('UPDATE players SET tide_tokens = $2 WHERE id = $1', [C, PLANT_COST - 1]);
+      const before = (await q<{ n: number }>("SELECT COUNT(*)::int AS n FROM zones WHERE owner_id = $1", [C]))[0].n;
+      const r = await call(zones.POST as Handler, { player_id: C, lat: -6.8, lng: 39.27 });
+      expect(r.status).toBe(402);
+      expect(r.body.error).toContain('Planting costs');
+      expect(await tokens(C)).toBe(PLANT_COST - 1);
+      expect((await q<{ n: number }>("SELECT COUNT(*)::int AS n FROM zones WHERE owner_id = $1", [C]))[0].n).toBe(before);
+    });
+
+    it(`stops at ${MAX_TURFS_PER_PLAYER} turfs without charging`, async () => {
+      await q('UPDATE players SET tide_tokens = 100000 WHERE id = $1', [C]);
+      for (let i = 1; i < MAX_TURFS_PER_PLAYER; i++) {
+        expect((await call(zones.POST as Handler, { player_id: C, lat: -6.8, lng: 39.27 + i * 0.001 })).status).toBe(200);
+      }
+      const before = await tokens(C);
+      const r = await call(zones.POST as Handler, { player_id: C, lat: -6.8, lng: 39.3 });
+      expect(r.status).toBe(409);
+      expect(await tokens(C)).toBe(before);
+    });
   });
 });

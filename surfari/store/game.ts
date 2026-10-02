@@ -51,7 +51,7 @@ interface GameStore {
   fetchZones: () => Promise<void>;
   surfZone: (zoneId: string) => Promise<void>;
   setPlantSite: (site: { lng: number; lat: number } | null) => void;
-  plantTurf: () => Promise<Zone | null>;
+  plantTurf: () => Promise<{ zone: Zone } | { error: string }>;
   buildZone: (zoneId: string) => Promise<boolean>;
   setSidebarCollapsed: (collapsed: boolean) => void;
 }
@@ -285,14 +285,17 @@ export const useGameStore = create<GameStore>()(
 
     plantTurf: async () => {
       const { player, plant_site } = get();
-      if (!player || !plant_site) return null;
+      if (!player || !plant_site) return { error: 'Pick a spot on the map first' };
       try {
         const res = await fetch('/api/game/zones', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ player_id: player.id, lat: plant_site.lat, lng: plant_site.lng }),
         });
-        if (!res.ok) return null;
+        if (!res.ok) {
+          const { error } = await res.json().catch(() => ({ error: null }));
+          return { error: error ?? 'Could not plant here' };
+        }
         const { zone, player: updatedPlayer } = await res.json();
         set((state) => ({
           player: updatedPlayer ?? state.player,
@@ -301,10 +304,10 @@ export const useGameStore = create<GameStore>()(
           plant_site: null,
     sidebarCollapsed: false,
         }));
-        return zone as Zone;
+        return { zone: zone as Zone };
       } catch (err) {
         console.error('plantTurf', err);
-        return null;
+        return { error: 'Lost connection — try again' };
       }
     },
   }))

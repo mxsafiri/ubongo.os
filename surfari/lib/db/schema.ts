@@ -22,7 +22,7 @@ async function migrate() {
       avatar_color VARCHAR(20) DEFAULT '#00D4FF',
       avatar_pattern VARCHAR(50) DEFAULT 'waves',
       origin_zone_id VARCHAR(100),
-      tide_tokens INTEGER DEFAULT 100000,
+      tide_tokens INTEGER DEFAULT 2000,
       tier VARCHAR(20) DEFAULT 'surfari',
       reputation INTEGER DEFAULT 0,
       zones_owned INTEGER DEFAULT 0,
@@ -36,6 +36,10 @@ async function migrate() {
       last_active TIMESTAMPTZ DEFAULT NOW()
     )
   `;
+
+  // New players start with STARTING_TIDE (signup also sets it explicitly);
+  // existing balances are left alone
+  await sql`ALTER TABLE players ALTER COLUMN tide_tokens SET DEFAULT 2000`;
 
   // Add pin_hash to existing deployments that predate this column
   await sql`ALTER TABLE players ADD COLUMN IF NOT EXISTS pin_hash TEXT`;

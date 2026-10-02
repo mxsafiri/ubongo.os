@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
+import { STARTING_TIDE } from '@/lib/game/balance';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Waves, AlertCircle, Lock } from 'lucide-react';
 import { useGameStore } from '@/store/game';
@@ -220,7 +221,7 @@ export default function Onboarding() {
               style={{ background: 'rgba(217,119,6,0.07)', border: '1px solid rgba(217,119,6,0.18)' }}>
               <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Starting capital</span>
               <span style={{ color: 'var(--color-gold)', fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: '14px' }}>
-                {formatTokens(100_000)} Tide
+                {formatTokens(STARTING_TIDE)} Tide
               </span>
             </div>
 
