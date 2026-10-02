@@ -213,7 +213,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     if (!map.getLayer('player-runner')) map.addLayer(runner);
     runner.setState({
       lng: center.lng, lat: center.lat,
-      heading: headingRef.current, speed: 0, lean: 0, jump: 0, mode: 'board',
+      heading: headingRef.current, speed: 0, lean: 0, jump: 0, mode: 'board', crashed: false,
     });
 
     /* ── Handle tag above the character ── */
@@ -560,6 +560,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         lean: steer * Math.min(speed01, 1),
         jump: jumpH,
         mode: onBoda ? 'boda' : 'board',
+        crashed: ts < stunUntilRef.current,
       });
       map.triggerRepaint();
 

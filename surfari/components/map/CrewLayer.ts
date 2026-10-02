@@ -2,7 +2,7 @@
 
 import * as THREE from 'three';
 import mapboxgl from 'mapbox-gl';
-import { buildCharacter, animateCharacter, addCharacterLights, disposeScene, type CharParts } from './runnerModel';
+import { buildCharacter, animateCharacter, addCharacterLights, disposeCharacter, disposeScene, type CharParts } from './runnerModel';
 import { UNIT_METERS } from './RunnerLayer';
 
 const M_PER_DEG_LAT = 110574;
@@ -80,6 +80,7 @@ export function createCrewLayer(id: string): CrewLayer {
       // Riders who went offline
       for (const [key, entry] of entries) {
         if (!seen.has(key)) {
+          disposeCharacter(entry.parts);
           disposeScene(entry.scene);
           entries.delete(key);
         }
@@ -103,7 +104,10 @@ export function createCrewLayer(id: string): CrewLayer {
     },
 
     onRemove() {
-      for (const entry of entries.values()) disposeScene(entry.scene);
+      for (const entry of entries.values()) {
+        disposeCharacter(entry.parts);
+        disposeScene(entry.scene);
+      }
       entries.clear();
       renderer?.dispose();
       renderer = null;
