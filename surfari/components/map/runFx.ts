@@ -8,6 +8,16 @@ const metersPerDegLng = (lat: number) => 111320 * Math.cos((lat * Math.PI) / 180
 
 type LngLat = { lng: number; lat: number };
 
+/**
+ * Where ground effects (wake, whip wedge) go: in the Standard style's
+ * 'middle' slot — under the 3D riders — or, on a style without slots,
+ * directly beneath the rider layer so they never paint over characters.
+ */
+function groundPlacement(map: mapboxgl.Map): { slot: { slot?: string }; before?: string } {
+  if (map.getStyle()?.imports?.length) return { slot: { slot: 'middle' } };
+  return { slot: {}, before: map.getLayer('player-runner') ? 'player-runner' : undefined };
+}
+
 /* ── Chase camera ───────────────────────────────────────────────────────
    Subway-Surfers framing (behind, above, looking down the street) that
    reacts to the ride: pulls back and looks further ahead with speed,
@@ -133,7 +143,7 @@ export function createWake(map: mapboxgl.Map, color = '#00C2FF'): Wake {
   if (!map.getSource(WAKE_SRC)) {
     map.addSource(WAKE_SRC, { type: 'geojson', data: empty, lineMetrics: true });
     // Slot only exists on the Mapbox Standard style
-    const slot = map.getStyle()?.imports?.length ? { slot: 'middle' } : {};
+    const { slot, before } = groundPlacement(map);
     map.addLayer({
       id: WAKE_LAYERS[0], type: 'line', source: WAKE_SRC, ...slot,
       layout: { 'line-cap': 'round', 'line-join': 'round' },
@@ -144,7 +154,7 @@ export function createWake(map: mapboxgl.Map, color = '#00C2FF'): Wake {
         'line-gradient': ['interpolate', ['linear'], ['line-progress'], 0, 'rgba(0,0,0,0)', 1, color],
         'line-opacity': 0,
       },
-    } as mapboxgl.LayerSpecification);
+    } as mapboxgl.LayerSpecification, before);
     map.addLayer({
       id: WAKE_LAYERS[1], type: 'line', source: WAKE_SRC, ...slot,
       layout: { 'line-cap': 'round', 'line-join': 'round' },
@@ -154,7 +164,7 @@ export function createWake(map: mapboxgl.Map, color = '#00C2FF'): Wake {
         'line-gradient': ['interpolate', ['linear'], ['line-progress'], 0, 'rgba(255,255,255,0)', 1, 'rgba(255,255,255,0.95)'],
         'line-opacity': 0,
       },
-    } as mapboxgl.LayerSpecification);
+    } as mapboxgl.LayerSpecification, before);
   }
 
   const sync = () => {
@@ -190,6 +200,91 @@ export function createWake(map: mapboxgl.Map, color = '#00C2FF'): Wake {
     remove() {
       for (const id of WAKE_LAYERS) if (map.getLayer(id)) map.removeLayer(id);
       if (map.getSource(WAKE_SRC)) map.removeSource(WAKE_SRC);
+    },
+  };
+}
+
+/* ── Whip shockwave ─────────────────────────────────────────────────────
+   A red wedge sweeping out behind the rider to the whip's exact reach, so
+   players can read where (and how far) the strike lands. */
+
+const SHOCK_SRC = 'run-shock';
+const SHOCK_LAYERS = ['run-shock-fill', 'run-shock-edge'];
+const SHOCK_MS = 380;
+
+export interface Shockwave {
+  trigger(p: LngLat, heading: number): void;
+  update(nowMs: number): void;
+  remove(): void;
+}
+
+export function createShockwave(map: mapboxgl.Map, reachM: number, halfAngle: number, color = '#FF4757'): Shockwave {
+  let origin: LngLat | null = null;
+  let heading = 0;
+  let startMs = -Infinity;
+  let visible = false;
+
+  const empty = { type: 'FeatureCollection' as const, features: [] };
+  if (!map.getSource(SHOCK_SRC)) {
+    map.addSource(SHOCK_SRC, { type: 'geojson', data: empty });
+    const { slot, before } = groundPlacement(map);
+    map.addLayer({
+      id: SHOCK_LAYERS[0], type: 'fill', source: SHOCK_SRC, ...slot,
+      paint: { 'fill-color': color, 'fill-opacity': 0, 'fill-emissive-strength': 1 },
+    } as mapboxgl.LayerSpecification, before);
+    map.addLayer({
+      id: SHOCK_LAYERS[1], type: 'line', source: SHOCK_SRC, ...slot,
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': '#FFD0D4', 'line-width': 4, 'line-blur': 1.5, 'line-opacity': 0, 'line-emissive-strength': 1 },
+    } as mapboxgl.LayerSpecification, before);
+  }
+
+  // Wedge behind the rider: apex at the rider, arc at radius r
+  const wedge = (o: LngLat, r: number) => {
+    const mLng = metersPerDegLng(o.lat);
+    const back = heading + Math.PI;
+    const ring: [number, number][] = [[o.lng, o.lat]];
+    const steps = 24;
+    for (let i = 0; i <= steps; i++) {
+      const a = back - halfAngle + (2 * halfAngle * i) / steps;
+      ring.push([o.lng + (Math.sin(a) * r) / mLng, o.lat + (Math.cos(a) * r) / M_PER_DEG_LAT]);
+    }
+    ring.push([o.lng, o.lat]);
+    return ring;
+  };
+
+  return {
+    trigger(p, h) {
+      origin = { ...p };
+      heading = h;
+      startMs = performance.now();
+      visible = true;
+    },
+    update(nowMs) {
+      if (!visible || !origin) return;
+      const k = (nowMs - startMs) / SHOCK_MS;
+      const src = map.getSource(SHOCK_SRC) as mapboxgl.GeoJSONSource | undefined;
+      if (k >= 1) {
+        visible = false;
+        src?.setData(empty);
+        return;
+      }
+      const ease = 1 - (1 - k) * (1 - k) * (1 - k); // fast out, settling at full reach
+      const ring = wedge(origin, Math.max(reachM * ease, 2));
+      src?.setData({
+        type: 'FeatureCollection',
+        features: [
+          { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [ring] } },
+          { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: ring.slice(1, -1) } },
+        ],
+      });
+      const fade = 1 - k;
+      if (map.getLayer(SHOCK_LAYERS[0])) map.setPaintProperty(SHOCK_LAYERS[0], 'fill-opacity', 0.45 * fade);
+      if (map.getLayer(SHOCK_LAYERS[1])) map.setPaintProperty(SHOCK_LAYERS[1], 'line-opacity', fade);
+    },
+    remove() {
+      for (const id of SHOCK_LAYERS) if (map.getLayer(id)) map.removeLayer(id);
+      if (map.getSource(SHOCK_SRC)) map.removeSource(SHOCK_SRC);
     },
   };
 }

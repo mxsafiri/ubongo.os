@@ -7,7 +7,7 @@ import { useGameStore } from '@/store/game';
 import { sfx } from '@/lib/game/sfx';
 import { createRunnerLayer } from './RunnerLayer';
 import { createCrewLayer } from './CrewLayer';
-import { ChaseCamera, createWake } from './runFx';
+import { ChaseCamera, createShockwave, createWake } from './runFx';
 import { createChaserLayer } from './ChaserLayer';
 import { CHASER, createChaseWorld, stepChase, whip, whipCooldown, type ChaseWorld } from './chaserAI';
 
@@ -318,6 +318,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
 
     /* ── Board wake ── */
     const wake = createWake(map, player.avatar_color);
+    const shock = createShockwave(map, CHASER.WHIP_RANGE_M, CHASER.WHIP_HALF_ANGLE);
 
     /* ── Obstacles ── */
     const spawnObstacle = (heading: number) => {
@@ -396,6 +397,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       const hits = whip(world, view());
       if (hits === null) return; // cooling down
       attackUntil = now + 450;
+      shock.trigger(posRef.current, headingRef.current);
       sfx.whoosh();
       if (hits.length > 0) {
         sfx.roundWin();
@@ -627,6 +629,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       if (onBoda && moving) chase.rumble(0.16 * Math.min(speed01, 1));
       chase.update(map, p, headingRef.current, speed01, jumpH, dt, ts / 1000);
       if (frame % 2 === 0) wake.push(p, moving ? speed01 : 0);
+      shock.update(ts);
       if (frame % 4 === 0 && speedFxRef.current) {
         const k = Math.min(Math.max((speed01 - 0.5) / 0.6, 0), 1);
         speedFxRef.current.style.opacity = String(k * (onBoda ? 0.85 : 0.6));
@@ -690,6 +693,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       if (map.getLayer('player-runner')) map.removeLayer('player-runner');
       if (map.getLayer('crew-runners')) map.removeLayer('crew-runners');
       wake.remove();
+      shock.remove();
       if (map.getLayer('chaser-runners')) map.removeLayer('chaser-runners');
       whipRef.current = () => {};
       if (map.getLayer('run-coins-core')) map.removeLayer('run-coins-core');
