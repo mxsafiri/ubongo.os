@@ -163,10 +163,11 @@ export interface MapViewState {
 export interface Transaction {
   id: string;
   player_id: string;
-  type: 'earn' | 'spend' | 'stake' | 'reward';
+  type: 'yield' | 'build' | 'run' | 'stake' | 'reward';
   amount: number;
   description: string;
-  timestamp: string;
+  zone_id: string | null;
+  created_at: string;
 }
 
 export interface Stake {

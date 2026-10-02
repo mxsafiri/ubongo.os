@@ -3,6 +3,7 @@ import { randomBytes } from 'crypto';
 import { sql } from '@/lib/db/client';
 import { ensureSchema } from '@/lib/db/schema';
 import { DAR_ZONES } from '@/lib/game/zones';
+import { publicPlayer } from '@/lib/game/economy';
 import type { Zone } from '@/types';
 
 const MAX_TURFS_PER_PLAYER = 5;
@@ -121,7 +122,7 @@ export async function POST(req: NextRequest) {
       infrastructure: [],
     } as unknown as Zone;
 
-    return NextResponse.json({ zone: zoneOut, player: updatedPlayer });
+    return NextResponse.json({ zone: zoneOut, player: publicPlayer(updatedPlayer) });
   } catch (err) {
     console.error('POST /api/game/zones', err);
     return NextResponse.json({ error: 'Failed to plant turf' }, { status: 500 });

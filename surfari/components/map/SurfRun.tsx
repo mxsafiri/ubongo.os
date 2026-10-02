@@ -75,7 +75,8 @@ function normAngle(a: number) {
  */
 export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void }) {
   const player = useGameStore((s) => s.player);
-  const updateTokens = useGameStore((s) => s.updateTokens);
+  const startRun = useGameStore((s) => s.startRun);
+  const bankRun = useGameStore((s) => s.bankRun);
   const addNotification = useGameStore((s) => s.addNotification);
   const [runTide, setRunTide] = useState(0);
   const [distKm, setDistKm] = useState(0);
@@ -100,6 +101,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
   const stunUntilRef = useRef(0);
   const distRef = useRef(0);
   const runTideRef = useRef(0);
+  const runIdRef = useRef<Promise<string | null> | null>(null);
   const lastZoneRef = useRef<{ id: string | null; at: number }>({ id: null, at: 0 });
   const knobRef = useRef<HTMLDivElement>(null);
   const endedRef = useRef(false);
@@ -132,16 +134,31 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
   const endRun = useCallback(() => {
     if (endedRef.current) return;
     endedRef.current = true;
-    const km = distRef.current / 1000;
-    const earned = runTideRef.current;
-    if (distRef.current > 400) {
+    const distM = distRef.current;
+    const km = distM / 1000;
+    const claimed = runTideRef.current;
+    const runId = runIdRef.current;
+    onExit();
+
+    // Bank the run server-side; the balance only moves once the server pays
+    void (async () => {
+      const id = runId ? await runId : null;
+      const earned = id ? await bankRun(id, distM, claimed) : null;
+      if (distM <= 400) return;
       addNotification({
         type: 'token_earned',
         title: `🏄 Run complete — ${km.toFixed(1)} km`,
-        message: earned > 0 ? `Bagged +${earned} Tide on the streets.` : 'No coins this run — ride the gold lines.',
+        message: earned === null
+          ? 'Could not bank this run — the city lost your signal.'
+          : earned > 0
+            ? `Banked +${earned} Tide${earned < claimed ? ` (of ${claimed} — daily run cap)` : ''}.`
+            : 'No coins this run — ride the gold lines.',
       });
-    }
-    if (distRef.current > 1000 && earned > 0 && player) {
+      if (distM > 1000 && earned && player) postRunEvent(earned);
+    })();
+
+    function postRunEvent(earned: number) {
+      if (!player) return;
       fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -155,8 +172,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         }),
       });
     }
-    onExit();
-  }, [addNotification, onExit, player]);
+  }, [addNotification, bankRun, onExit, player]);
   const endRunRef = useRef(endRun);
   endRunRef.current = endRun;
 
@@ -166,6 +182,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     posRef.current = { lng: center.lng, lat: center.lat };
     headingRef.current = (map.getBearing() * Math.PI) / 180;
     speedRef.current = 0;
+    runIdRef.current = startRun();
 
     // Seed the chase camera behind the runner so the first frame is framed right
     {
@@ -410,7 +427,6 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         const grabbed = before - coinsRef.current.length;
         if (grabbed > 0) {
           sfx.hit(grabbed);
-          updateTokens(grabbed * COIN_VALUE);
           runTideRef.current += grabbed * COIN_VALUE;
           setRunTide(runTideRef.current);
           syncCoins();
@@ -442,7 +458,6 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
               if (onBoda) bodaUntilRef.current = 0; // knocked off the bike
               const loss = Math.floor((runTideRef.current * CRASH_LOSS_PCT) / COIN_VALUE) * COIN_VALUE;
               if (loss > 0) {
-                updateTokens(-loss);
                 runTideRef.current -= loss;
                 setRunTide(runTideRef.current);
               }
@@ -584,8 +599,10 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         essential: true,
       });
     };
+  // Keyed on the id, not the object: balance updates replace `player` and
+  // must not tear down and restart a run in progress.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, player]);
+  }, [map, player?.id]);
 
   /* ── Joystick pointer handling ── */
   const joyStart = (e: React.PointerEvent) => {

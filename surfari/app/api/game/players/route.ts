@@ -2,6 +2,16 @@ import { createHash } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db/client';
 import { ensureSchema } from '@/lib/db/schema';
+import { publicPlayer, settleYield } from '@/lib/game/economy';
+
+// Logging in pays out whatever the player's turf earned while they were away.
+// Background balance syncs pass touch=false: last_active drives the live
+// riders list, so a tab left open mustn't count as riding.
+async function welcomeBack(playerId: string, touch = true) {
+  if (touch) await sql`UPDATE players SET last_active = NOW() WHERE id = ${playerId}`;
+  const { player, collected } = await settleYield(playerId);
+  return NextResponse.json({ player: player && publicPlayer(player), returning: true, yield_collected: collected });
+}
 
 function hashPin(pin: string, handle: string): string {
   return createHash('sha256').update(`surfari:${handle}:${pin}`).digest('hex');
@@ -21,16 +31,15 @@ export async function POST(req: NextRequest) {
     await ensureSchema();
 
     const body = await req.json();
-    const { player_id, handle, avatar_color, avatar_pattern, pin, geo_lat, geo_lng } = body;
+    const { player_id, handle, avatar_color, avatar_pattern, pin, geo_lat, geo_lng, sync } = body;
 
     // ── Mode 1: same-device restore via player_id (localStorage) ──────────
     if (player_id) {
-      const rows = await sql`SELECT * FROM players WHERE id = ${player_id}`;
+      const rows = await sql`SELECT id FROM players WHERE id = ${player_id}`;
       if (rows.length === 0) {
         return NextResponse.json({ error: 'Player not found' }, { status: 404 });
       }
-      await sql`UPDATE players SET last_active = NOW() WHERE id = ${player_id}`;
-      return NextResponse.json({ player: rows[0], returning: true });
+      return welcomeBack(player_id, sync !== true);
     }
 
     // ── Shared handle validation ───────────────────────────────────────────
@@ -52,7 +61,7 @@ export async function POST(req: NextRequest) {
         VALUES (${h}, ${avatar_color ?? '#00C2FF'}, ${avatar_pattern ?? 'waves'}, ${pin_hash}, ${geo_lat ?? null}, ${geo_lng ?? null})
         RETURNING *
       `;
-      return NextResponse.json({ player, returning: false });
+      return NextResponse.json({ player: publicPlayer(player), returning: false, yield_collected: 0 });
     }
 
     // ── Mode 3: returning player on new device — verify PIN ────────────────
@@ -62,11 +71,9 @@ export async function POST(req: NextRequest) {
     if (!row.pin_hash) {
       if (pin && String(pin).length >= 4) {
         const pin_hash = hashPin(String(pin), h);
-        await sql`UPDATE players SET pin_hash = ${pin_hash}, last_active = NOW() WHERE id = ${row.id}`;
-      } else {
-        await sql`UPDATE players SET last_active = NOW() WHERE id = ${row.id}`;
+        await sql`UPDATE players SET pin_hash = ${pin_hash} WHERE id = ${row.id}`;
       }
-      return NextResponse.json({ player: row, returning: true });
+      return welcomeBack(row.id);
     }
 
     if (!pin) {
@@ -78,8 +85,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Incorrect PIN', needs_pin: true }, { status: 401 });
     }
 
-    await sql`UPDATE players SET last_active = NOW() WHERE id = ${row.id}`;
-    return NextResponse.json({ player: row, returning: true });
+    return welcomeBack(row.id);
 
   } catch (err) {
     console.error('POST /api/game/players', err);

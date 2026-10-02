@@ -1,7 +1,20 @@
 import { sql } from './client';
 import { DAR_ZONES } from '@/lib/game/zones';
 
-export async function ensureSchema() {
+// Schema setup runs once per server instance, not on every request.
+let ready: Promise<void> | null = null;
+
+export function ensureSchema(): Promise<void> {
+  if (!ready) {
+    ready = migrate().catch((err) => {
+      ready = null; // let the next request retry
+      throw err;
+    });
+  }
+  return ready;
+}
+
+async function migrate() {
   await sql`
     CREATE TABLE IF NOT EXISTS players (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -53,6 +66,36 @@ export async function ensureSchema() {
 
   // Add level to existing deployments that predate this column
   await sql`ALTER TABLE zones ADD COLUMN IF NOT EXISTS level INTEGER DEFAULT 1`;
+
+  // Yield clock: owned zones accrue Tide from this moment until it's settled
+  await sql`ALTER TABLE zones ADD COLUMN IF NOT EXISTS yield_collected_at TIMESTAMPTZ DEFAULT NOW()`;
+
+  // Ledger — every server-side change to a player's Tide balance lands here
+  await sql`
+    CREATE TABLE IF NOT EXISTS transactions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      player_id UUID REFERENCES players(id) ON DELETE CASCADE,
+      type VARCHAR(20) NOT NULL,
+      amount INTEGER NOT NULL,
+      description TEXT,
+      zone_id VARCHAR(100),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS transactions_player_created ON transactions(player_id, created_at DESC)`;
+
+  // Surf Runs — the server clocks each run so payouts can be sanity-checked
+  await sql`
+    CREATE TABLE IF NOT EXISTS runs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      player_id UUID REFERENCES players(id) ON DELETE CASCADE,
+      started_at TIMESTAMPTZ DEFAULT NOW(),
+      ended_at TIMESTAMPTZ,
+      distance_m INTEGER,
+      claimed_tide INTEGER,
+      payout INTEGER
+    )
+  `;
 
   await sql`
     CREATE TABLE IF NOT EXISTS messages (
