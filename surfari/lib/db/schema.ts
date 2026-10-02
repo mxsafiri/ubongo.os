@@ -40,6 +40,12 @@ async function migrate() {
   // Add pin_hash to existing deployments that predate this column
   await sql`ALTER TABLE players ADD COLUMN IF NOT EXISTS pin_hash TEXT`;
 
+  // Live motion for Surf Run dead reckoning (heading rad, speed m/s, turn rad/s)
+  await sql`ALTER TABLE players ADD COLUMN IF NOT EXISTS geo_heading REAL`;
+  await sql`ALTER TABLE players ADD COLUMN IF NOT EXISTS geo_speed REAL`;
+  await sql`ALTER TABLE players ADD COLUMN IF NOT EXISTS geo_turn REAL`;
+  await sql`ALTER TABLE players ADD COLUMN IF NOT EXISTS geo_mode VARCHAR(10)`;
+
   await sql`
     CREATE TABLE IF NOT EXISTS zones (
       id VARCHAR(100) PRIMARY KEY,

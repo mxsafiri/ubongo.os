@@ -7,6 +7,7 @@ import { useGameStore } from '@/store/game';
 import { sfx } from '@/lib/game/sfx';
 import { createRunnerLayer } from './RunnerLayer';
 import { createCrewLayer } from './CrewLayer';
+import { ChaseCamera, createWake } from './runFx';
 
 /* ── Movement physics (all rates are per-second; frame-rate independent) ── */
 const MAX_SPEED = 74;         // m/s on the board
@@ -16,14 +17,6 @@ const DECEL_RATE = 2.8;       // coast friction
 const BRAKE_RATE = 6.5;       // hard brake
 const TURN_RATE = 2.5;        // rad/s at full steer
 
-/* ── Chase camera (Subway Surfers framing: behind, above, looking ahead).
-       Steep ~45° down-angle so buildings rarely occlude the character and
-       the runner always sits in the lower third of the frame. ── */
-const CAM_BACK_M = 50;
-const CAM_ALT_M = 46;
-const LOOK_AHEAD_M = 12;
-const CAM_POS_RATE = 3.2;     // camera position smoothing
-const CAM_TGT_RATE = 6.0;     // look-target smoothing
 
 /* ── Run economy ── */
 const COIN_VALUE = 25;
@@ -89,9 +82,10 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
   const joyRef = useRef({ active: false, x: 0, y: 0 });
   const speedRef = useRef(0);          // m/s
   const headingRef = useRef(0);        // rad, clockwise from north
-  const camPosRef = useRef<{ lng: number; lat: number }>({ lng: 0, lat: 0 });
-  const camTgtRef = useRef<{ lng: number; lat: number }>({ lng: 0, lat: 0 });
-  const camYawRef = useRef(0);
+  const yawRateRef = useRef(0);        // rad/s, smoothed — sent so others can dead-reckon our arc
+  // Chase camera (framing, speed pull-back, turn aim, impact shake) — see runFx
+  const [chase] = useState(() => new ChaseCamera());
+  const speedFxRef = useRef<HTMLDivElement>(null);
   const bodaUntilRef = useRef(0);
   const coinsRef = useRef<Coin[]>([]);
   const coinIdRef = useRef(0);
@@ -109,20 +103,9 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
   // Snap the chase camera directly behind the runner — no smoothing.
   // The one-tap answer to "where am I?"
   const recenter = useCallback(() => {
-    const p = posRef.current;
-    const mLng = metersPerDegLng(p.lat);
-    const fx = Math.sin(headingRef.current);
-    const fy = Math.cos(headingRef.current);
-    camPosRef.current = {
-      lng: p.lng - (fx * CAM_BACK_M) / mLng,
-      lat: p.lat - (fy * CAM_BACK_M) / M_PER_DEG_LAT,
-    };
-    camTgtRef.current = {
-      lng: p.lng + (fx * LOOK_AHEAD_M) / mLng,
-      lat: p.lat + (fy * LOOK_AHEAD_M) / M_PER_DEG_LAT,
-    };
+    chase.snap(posRef.current, headingRef.current);
     sfx.whoosh();
-  }, []);
+  }, [chase]);
 
   const doJump = useCallback(() => {
     if (jumpStartRef.current === 0 && performance.now() >= stunUntilRef.current) {
@@ -185,20 +168,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     runIdRef.current = startRun();
 
     // Seed the chase camera behind the runner so the first frame is framed right
-    {
-      const mLng = metersPerDegLng(center.lat);
-      const fx = Math.sin(headingRef.current);
-      const fy = Math.cos(headingRef.current);
-      camPosRef.current = {
-        lng: center.lng - (fx * CAM_BACK_M) / mLng,
-        lat: center.lat - (fy * CAM_BACK_M) / M_PER_DEG_LAT,
-      };
-      camTgtRef.current = {
-        lng: center.lng + (fx * LOOK_AHEAD_M) / mLng,
-        lat: center.lat + (fy * LOOK_AHEAD_M) / M_PER_DEG_LAT,
-      };
-      camYawRef.current = headingRef.current;
-    }
+    chase.snap(posRef.current, headingRef.current);
 
     // The game owns the camera during a run — stop map gestures from
     // fighting it (drag/zoom jitter was disorienting riders)
@@ -235,14 +205,33 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         const res = await fetch('/api/game/players/position', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ player_id: player.id, lat: p.lat, lng: p.lng }),
+          body: JSON.stringify({
+            player_id: player.id,
+            lat: p.lat,
+            lng: p.lng,
+            heading: headingRef.current,
+            speed: speedRef.current,
+            turn: yawRateRef.current,
+            mode: performance.now() < bodaUntilRef.current ? 'boda' : 'board',
+          }),
         });
         if (!res.ok) return;
         const { players: riders } = await res.json();
+        type Rider = {
+          id: string; handle: string; avatar_color: string; lat: number; lng: number;
+          heading: number | null; speed: number | null; turn: number | null; mode: string | null; age_s: number | null;
+        };
         crew.setPlayers(
-          (riders as { id: string; handle: string; avatar_color: string; lat: number; lng: number }[])
+          (riders as Rider[])
             .filter((r) => typeof r.lat === 'number' && typeof r.lng === 'number')
-            .map((r) => ({ id: r.id, handle: r.handle, color: r.avatar_color, lng: r.lng, lat: r.lat })),
+            .map((r) => ({
+              id: r.id, handle: r.handle, color: r.avatar_color, lng: r.lng, lat: r.lat,
+              heading: r.heading ?? undefined,
+              speed: r.speed ?? undefined,
+              turn: r.turn ?? undefined,
+              mode: r.mode === 'boda' ? 'boda' as const : 'board' as const,
+              ageS: r.age_s ?? 0,
+            })),
         );
       } catch { /* heartbeat is best-effort */ }
     };
@@ -309,6 +298,9 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     }
     spawnCoins();
 
+    /* ── Board wake ── */
+    const wake = createWake(map, player.avatar_color);
+
     /* ── Obstacles ── */
     const spawnObstacle = (heading: number) => {
       if (obstaclesRef.current.length >= OB_MAX) return;
@@ -359,6 +351,8 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     let lastTs = performance.now();
     let lastObSpawn = 0;
     let frame = 0;
+    let prevJumpH = 0;
+    let prevHeading = headingRef.current;
 
     const tick = (ts: number) => {
       const dt = Math.min((ts - lastTs) / 1000, 0.05);
@@ -388,7 +382,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         const jy = joyRef.current.y;
         const m = Math.min(Math.hypot(jx, jy), 1);
         if (m > 0.12) {
-          const desired = Math.atan2(jx, -jy) + camYawRef.current;
+          const desired = Math.atan2(jx, -jy) + chase.yaw;
           const dh = normAngle(desired - headingRef.current);
           const maxTurn = TURN_RATE * dt;
           headingRef.current += Math.max(-maxTurn, Math.min(maxTurn, dh));
@@ -451,8 +445,10 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
               // Swing onto the boda — 8s of boost
               bodaUntilRef.current = ts + BODA_RIDE_MS;
               sfx.roundWin();
+              chase.addTrauma(0.2);
             } else {
               sfx.crash();
+              chase.addTrauma(0.7);
               stunUntilRef.current = ts + CRASH_STUN_MS;
               speedRef.current *= 0.15; // the crash eats your momentum
               if (onBoda) bodaUntilRef.current = 0; // knocked off the bike
@@ -490,38 +486,22 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         }
       }
 
-      /* ── Chase camera: behind + above, looking down the street.
-             Runs every frame so it keeps settling smoothly at rest. ── */
-      {
-        const mLng = metersPerDegLng(p.lat);
-        const fx = Math.sin(headingRef.current);
-        const fy = Math.cos(headingRef.current);
-        const desiredCam = {
-          lng: p.lng - (fx * CAM_BACK_M) / mLng,
-          lat: p.lat - (fy * CAM_BACK_M) / M_PER_DEG_LAT,
-        };
-        const desiredTgt = {
-          lng: p.lng + (fx * LOOK_AHEAD_M) / mLng,
-          lat: p.lat + (fy * LOOK_AHEAD_M) / M_PER_DEG_LAT,
-        };
-        const kc = 1 - Math.exp(-CAM_POS_RATE * dt);
-        const kt = 1 - Math.exp(-CAM_TGT_RATE * dt);
-        const cp = camPosRef.current;
-        const ct = camTgtRef.current;
-        cp.lng += (desiredCam.lng - cp.lng) * kc;
-        cp.lat += (desiredCam.lat - cp.lat) * kc;
-        ct.lng += (desiredTgt.lng - ct.lng) * kt;
-        ct.lat += (desiredTgt.lat - ct.lat) * kt;
+      if (dt > 0) {
+        const raw = normAngle(headingRef.current - prevHeading) / dt;
+        yawRateRef.current += (raw - yawRateRef.current) * (1 - Math.exp(-8 * dt));
+      }
+      prevHeading = headingRef.current;
 
-        const cam = map.getFreeCameraOptions();
-        cam.position = mapboxgl.MercatorCoordinate.fromLngLat([cp.lng, cp.lat], CAM_ALT_M);
-        cam.lookAtPoint([ct.lng, ct.lat]);
-        map.setFreeCameraOptions(cam);
-
-        camYawRef.current = Math.atan2(
-          (ct.lng - cp.lng) * mLng,
-          (ct.lat - cp.lat) * M_PER_DEG_LAT,
-        );
+      /* ── Chase camera + speed FX. Runs every frame so it keeps settling at rest. ── */
+      // A hard landing kicks the camera
+      if (prevJumpH > 2 && jumpH === 0) chase.addTrauma(0.35);
+      prevJumpH = jumpH;
+      if (onBoda && moving) chase.rumble(0.16 * Math.min(speed01, 1));
+      chase.update(map, p, headingRef.current, speed01, jumpH, dt, ts / 1000);
+      if (frame % 2 === 0) wake.push(p, moving ? speed01 : 0);
+      if (frame % 4 === 0 && speedFxRef.current) {
+        const k = Math.min(Math.max((speed01 - 0.5) / 0.6, 0), 1);
+        speedFxRef.current.style.opacity = String(k * (onBoda ? 0.85 : 0.6));
       }
 
       // Remote riders' name tags glued to interpolated positions
@@ -580,6 +560,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       obstaclesRef.current = [];
       if (map.getLayer('player-runner')) map.removeLayer('player-runner');
       if (map.getLayer('crew-runners')) map.removeLayer('crew-runners');
+      wake.remove();
       if (map.getLayer('run-coins-core')) map.removeLayer('run-coins-core');
       if (map.getLayer('run-coins-glow')) map.removeLayer('run-coins-glow');
       if (map.getSource('run-coins')) map.removeSource('run-coins');
@@ -650,6 +631,15 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
           filter: drop-shadow(0 3px 4px rgba(0,0,0,0.55)) drop-shadow(0 0 10px rgba(0,224,150,0.85));
         }
         @keyframes surf-ob-wobble { from { transform:rotate(-4deg); } to { transform:rotate(4deg); } }
+        .surf-speedlines {
+          background: repeating-conic-gradient(from 0deg at 50% 62%,
+            rgba(255,255,255,0.0) 0deg 2.2deg, rgba(255,255,255,0.55) 2.6deg, rgba(255,255,255,0.0) 3deg 7deg);
+          -webkit-mask-image: radial-gradient(ellipse 75% 70% at 50% 62%, transparent 42%, #000 100%);
+          mask-image: radial-gradient(ellipse 75% 70% at 50% 62%, transparent 42%, #000 100%);
+          transition: opacity 0.25s linear;
+          animation: surf-speedlines-flicker 0.12s steps(2) infinite;
+        }
+        @keyframes surf-speedlines-flicker { from { transform: rotate(0deg) scale(1.02); } to { transform: rotate(1.4deg) scale(1.04); } }
       `}</style>
 
       {/* Crash vignette */}
@@ -666,6 +656,9 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
           />
         )}
       </AnimatePresence>
+
+      {/* Speed lines — fade in near top speed (opacity driven from the game loop) */}
+      <div ref={speedFxRef} className="surf-speedlines absolute inset-0 z-10 pointer-events-none" style={{ opacity: 0 }} />
 
       {/* Boda boost vignette — subtle green speed edges while mounted */}
       {bodaLeft > 0 && (

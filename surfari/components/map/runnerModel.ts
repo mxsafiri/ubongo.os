@@ -3,14 +3,18 @@
 import * as THREE from 'three';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
+import { clamp, damp, dampAngle, spring, stepSpring, wrapAngle, type Spring } from '@/lib/game/motion';
 
 // Shared runner model — used by RunnerLayer (the local player) and
 // CrewLayer (remote riders). ~1.8 model units tall.
 //
 // The character is a rigged, animated glTF (public/models/runner.glb, CC0)
-// driven by a small animation state machine with crossfades. Until the
-// model has loaded — or if it never does — a procedural stand-in is shown,
-// so a rider is never invisible.
+// driven by a small animation state machine with crossfades. On top of the
+// clips, a physics layer derives body motion from how the rider actually
+// moves: banking from lateral acceleration, weight shifts from throttle and
+// brake, compression on take-off and landing, head and shoulders turned to
+// look down the line. Until the model has loaded — or if it never does — a
+// procedural stand-in is shown, so a rider is never invisible.
 
 export type RideMode = 'board' | 'boda';
 
@@ -34,12 +38,34 @@ const CLIPS: Record<Clip, { name: string; once?: boolean }> = {
 
 interface Rig {
   root: THREE.Object3D;
+  baseScale: number;
   mixer: THREE.AnimationMixer;
   actions: Record<Clip, THREE.AnimationAction>;
   state: Clip | null;
   stance: number;                       // current yaw offset (radians)
-  arms: { l: THREE.Object3D | null; r: THREE.Object3D | null };
+  bones: {
+    shoulderL: THREE.Object3D | null;
+    shoulderR: THREE.Object3D | null;
+    abdomen: THREE.Object3D | null;
+    head: THREE.Object3D | null;
+  };
   armSpread: number;                    // 0..1, eased toward the target pose
+}
+
+/** Physics state behind the secondary motion — one per character. */
+interface Dynamics {
+  init: boolean;
+  heading: number;      // smoothed facing (rad, clockwise from north)
+  rawHeading: number;   // last input heading, for yaw rate
+  speed: number;        // last input speed (0..1)
+  jump: number;         // last input jump height (m)
+  vy: number;           // vertical velocity (m/s), for board pitch
+  crashed: boolean;
+  bank: Spring;         // roll into turns
+  pitch: Spring;        // weight forward/back from throttle & brake
+  comp: Spring;         // compression from take-off / landing impacts
+  knock: Spring;        // crash wobble
+  look: Spring;         // head turning into the turn
 }
 
 interface Fallback {
@@ -59,8 +85,11 @@ export interface CharParts {
   boardStripe: THREE.Mesh;
   boda: THREE.Group;
   wheels: THREE.Mesh[];
+  shadow: THREE.Mesh;
+  xray: THREE.MeshBasicMaterial;
   lastT: number;
   disposed: boolean;
+  dyn: Dynamics;
 }
 
 /* ── Model loading (once per page) ── */
@@ -89,7 +118,6 @@ function attachRig(parts: CharParts, gltf: GLTF, accent: string) {
   const h = box.max.y - box.min.y || 1;
   const s = RIG_HEIGHT / h;
   root.scale.setScalar(s);
-  root.position.y = -box.min.y * s;
 
   // Per-rider materials: tint the body in the rider's colour. Geometry is
   // shared with the cached source model, so it's flagged to survive disposal.
@@ -120,13 +148,20 @@ function attachRig(parts: CharParts, gltf: GLTF, accent: string) {
     actions[clip] = action;
   }
 
+  const bone = (n: string) => root.getObjectByName(n) ?? null;
   parts.rig = {
     root,
+    baseScale: s,
     mixer,
     actions,
     state: null,
     stance: 0,
-    arms: { l: root.getObjectByName('ShoulderL') ?? null, r: root.getObjectByName('ShoulderR') ?? null },
+    bones: {
+      shoulderL: bone('ShoulderL'),
+      shoulderR: bone('ShoulderR'),
+      abdomen: bone('Abdomen'),
+      head: bone('Head'),
+    },
     armSpread: 0,
   };
   parts.fallback.root.visible = false;
@@ -219,8 +254,19 @@ export function buildCharacter(accent: string): CharParts {
 
   const parts: CharParts = {
     group: g, body, fallback, rig: null,
-    board, boardStripe: stripe, boda, wheels,
+    board, boardStripe: stripe, boda, wheels, shadow,
+    xray: new THREE.MeshBasicMaterial({
+      color: accent,
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+      depthFunc: THREE.GreaterDepth,
+    }),
     lastT: -1, disposed: false,
+    dyn: {
+      init: false, heading: 0, rawHeading: 0, speed: 0, jump: 0, vy: 0, crashed: false,
+      bank: spring(), pitch: spring(), comp: spring(), knock: spring(), look: spring(),
+    },
   };
 
   loadRunnerModel()
@@ -273,70 +319,139 @@ function buildFallback(accent: string, mat: (c: string | number) => THREE.Materi
 
 /* ── Per-frame animation ── */
 
+export interface MotionInput {
+  t: number;            // seconds (performance.now() / 1000)
+  heading: number;      // radians, clockwise from north
+  speed: number;        // 0..1 of top speed
+  jump: number;         // meters above ground
+  unitMeters: number;   // meters per model unit
+  mode?: RideMode;
+  crashed?: boolean;    // inside the post-crash stun window
+}
+
+// Tuning — all rates are per second
+const HEADING_RATE = 16;        // how tightly the body follows the heading
+const BANK_PER_ALAT = 0.24;     // rad of roll per (speed × rad/s of yaw)
+const BANK_MAX = 0.6;
+const PITCH_PER_ACCEL = 0.14;   // rad of lean per (speed/s)
+const LAND_IMPULSE = 0.09;      // compression velocity per m/s of fall speed
+const TAKEOFF_IMPULSE = -1.6;   // a small pre-load dip as the board leaves
+
 /**
- * Drive the character. jump is meters above ground; UNIT_METERS converts to
- * model units. crashed plays the hit reaction for the stun window.
+ * Drive the character from the rider's motion. Layers call this once per
+ * frame; it owns the group's facing so turning, banking and the animation
+ * clock all share one dt.
  */
-export function animateCharacter(
-  parts: CharParts,
-  t: number,
-  speed: number,
-  lean: number,
-  jump: number,
-  unitMeters: number,
-  mode: RideMode = 'board',
-  crashed = false,
-) {
-  const { body, board, boardStripe, boda, wheels, rig } = parts;
-  const dt = parts.lastT < 0 ? 0 : Math.min(t - parts.lastT, 0.1);
-  parts.lastT = t;
+export function animateCharacter(parts: CharParts, m: MotionInput) {
+  const { group, body, board, boardStripe, boda, wheels, rig, dyn } = parts;
+  const mode = m.mode ?? 'board';
+  const crashed = !!m.crashed;
+  const dt = parts.lastT < 0 ? 0 : Math.min(m.t - parts.lastT, 0.1);
+  parts.lastT = m.t;
 
-  const airborne = jump > 0.4;
+  if (!dyn.init) {
+    dyn.init = true;
+    dyn.heading = dyn.rawHeading = m.heading;
+    dyn.speed = m.speed;
+    dyn.jump = m.jump;
+  }
+
+  /* ── Derive motion from the input stream ── */
+  const yawRate = dt > 0 ? wrapAngle(m.heading - dyn.rawHeading) / dt : 0;
+  const accel = dt > 0 ? (m.speed - dyn.speed) / dt : 0;
+  const vy = dt > 0 ? (m.jump - dyn.jump) / dt : 0;
+  const wasAir = dyn.jump > 0.05;
+  const isAir = m.jump > 0.05;
+  if (!wasAir && isAir) dyn.comp.v += TAKEOFF_IMPULSE;                 // take-off
+  if (wasAir && !isAir) dyn.comp.v += Math.abs(dyn.vy) * LAND_IMPULSE * 10; // landing
+  if (crashed && !dyn.crashed) dyn.knock.v += (Math.random() < 0.5 ? -1 : 1) * 9;
+  dyn.rawHeading = m.heading;
+  dyn.speed = m.speed;
+  dyn.jump = m.jump;
+  if (dt > 0) dyn.vy = vy;
+  dyn.crashed = crashed;
+
+  /* ── Springs ── */
+  const aLat = m.speed * yawRate; // centripetal demand, in (speed × rad/s)
   const riding = mode === 'boda';
+  const bankTarget = isAir ? dyn.bank.x * 0.5 : clamp(aLat * BANK_PER_ALAT * (riding ? 1.25 : 1), -BANK_MAX, BANK_MAX);
+  stepSpring(dyn.bank, bankTarget, 9, 0.62, dt);        // slightly under-damped: settles with a little life
+  stepSpring(dyn.pitch, clamp(accel * PITCH_PER_ACCEL, -0.28, 0.28), 7, 0.7, dt);
+  stepSpring(dyn.comp, 0, 15, 0.42, dt);                // bouncy impact absorption
+  stepSpring(dyn.knock, 0, 11, 0.3, dt);
+  stepSpring(dyn.look, clamp(yawRate * 0.22, -0.5, 0.5), 8, 0.9, dt);
+  const comp = clamp(dyn.comp.x, -0.6, 1.2);
 
+  /* ── Facing ── */
+  dyn.heading = dampAngle(dyn.heading, m.heading, HEADING_RATE, dt);
+  // The layer maps model +Z to geographic south, so face = π − heading
+  group.rotation.y = Math.PI - dyn.heading;
+
+  /* ── Whole-body motion, shared by the rig and the stand-in ── */
   board.visible = !riding;
   boardStripe.visible = !riding;
   boda.visible = riding;
-  if (riding) for (const w of wheels) w.rotation.x -= speed * 0.5;
+  if (riding) for (const w of wheels) w.rotation.x -= m.speed * 30 * dt;
 
-  /* Whole-body motion, shared by the rig and the stand-in */
-  const ease = 1 - Math.exp(-10 * dt);
-  if (riding) {
-    body.rotation.x = airborne ? -0.22 : speed * 0.05;
-    body.rotation.z = -lean * 0.45 * Math.max(speed, 0.3);
-    body.position.y = jump / unitMeters + (airborne ? 0 : Math.abs(Math.sin(t * 14)) * 0.012 * speed);
+  // Positive bank (right turn) rolls the rider toward the inside of the turn
+  body.rotation.z = dyn.bank.x + dyn.knock.x * 0.25;
+  if (isAir) {
+    // Board follows the arc: nose up on the way up, down on the way down
+    body.rotation.x = damp(body.rotation.x, clamp(-vy * 0.035, -0.35, 0.35), 10, dt);
   } else {
-    body.rotation.x = airborne ? -0.18 : speed * 0.06;
-    body.rotation.z = -lean * 0.32 * Math.max(speed, 0.3);
-    // Surf bob: the deck rides a swell rather than footsteps
-    body.position.y = jump / unitMeters + (airborne ? 0 : Math.sin(t * 2.4) * 0.03 * (0.3 + speed));
-    board.rotation.z = airborne ? lean * 0.2 : Math.sin(t * 1.6) * 0.05 + lean * 0.12;
+    body.rotation.x = damp(body.rotation.x, -dyn.pitch.x * 0.35, 12, dt);
   }
+  const swell = isAir || riding ? 0 : Math.sin(m.t * 2.4) * 0.025 * (0.3 + m.speed);
+  const judder = riding && !isAir ? Math.abs(Math.sin(m.t * 38)) * 0.01 * m.speed : 0;
+  body.position.y = m.jump / m.unitMeters + swell + judder - comp * 0.05;
+  board.rotation.z = isAir ? dyn.bank.x * 0.3 : Math.sin(m.t * 1.6) * 0.03;
 
   if (!rig) {
-    animateFallback(parts.fallback, t, speed, airborne, riding);
+    animateFallback(parts.fallback, m.t, m.speed, isAir, riding);
     return;
   }
 
-  /* Rig: state machine → clip, then layered stance + arm pose */
-  setClip(rig, pickClip(speed, airborne, mode, crashed));
-  const a = rig.actions[rig.state!];
-  if (rig.state === 'Surf') a.setEffectiveTimeScale(0.6 + speed * 0.8);
+  /* ── Rig: state machine → clip ── */
+  setClip(rig, pickClip(m.speed, isAir, mode, crashed));
+  const action = rig.actions[rig.state!];
+  if (rig.state === 'Surf') action.setEffectiveTimeScale(0.6 + m.speed * 0.8);
   rig.mixer.update(dt);
 
-  // Turn sideways on the deck while surfing; face forward otherwise
-  const stanceTarget = rig.state === 'Surf' || rig.state === 'Jump' ? SURF_STANCE : 0;
-  rig.stance += (stanceTarget - rig.stance) * ease;
-  rig.root.rotation.y = rig.stance;
+  // Squash on impact — volume-preserving-ish, about the feet
+  const sq = clamp(comp, -0.4, 1) * 0.09;
+  rig.root.scale.set(rig.baseScale * (1 + sq * 0.5), rig.baseScale * (1 - sq), rig.baseScale * (1 + sq * 0.5));
   rig.root.position.y = riding ? BODA_SEAT : BOARD_TOP;
 
-  // Arms out for balance — eased, layered on the shoulders after the mixer
-  // has posed the bones (the rig's feet are planted, so legs stay clip-driven)
-  const spreadTarget = rig.state === 'Surf' ? 0.6 + speed * 0.4 : rig.state === 'Jump' ? 1.15 : 0;
-  rig.armSpread += (spreadTarget - rig.armSpread) * ease;
+  // Turn sideways on the deck while surfing; face forward otherwise
+  const surfing = rig.state === 'Surf' || rig.state === 'Jump';
+  rig.stance = damp(rig.stance, surfing ? SURF_STANCE : 0, 9, dt);
+  rig.root.rotation.y = rig.stance;
+  const stanceK = rig.stance / SURF_STANCE; // 0 facing forward … 1 side-on
+
+  /* ── Layered bone pose (after the mixer has written the clip pose) ── */
+  const { shoulderL, shoulderR, abdomen, head } = rig.bones;
+
+  // Crouch: lower at speed, deeper under acceleration and on impact, tucked in the air
+  if (abdomen && rig.state !== 'Crash') {
+    const crouch = surfing
+      ? 0.04 + m.speed * 0.1 + dyn.pitch.x * 0.35 + comp * 0.2 + (isAir ? 0.14 : 0)
+      : comp * 0.2;
+    abdomen.rotateX(clamp(crouch, -0.15, 0.45));
+    // Shoulders square to the direction of travel, like a surfer reading the line
+    abdomen.rotateY(-0.42 * stanceK);
+  }
+  if (head && rig.state !== 'Crash') {
+    // Eyes down the line, and into the turn ahead of the body
+    head.rotateY(-0.72 * stanceK - dyn.look.x * 0.35);
+  }
+
+  // Arms out for balance; the outside arm lifts and the inside arm drops in a carve
+  const spreadTarget = rig.state === 'Surf' ? 0.6 + m.speed * 0.4 : rig.state === 'Jump' ? 1.15 : 0;
+  rig.armSpread = damp(rig.armSpread, spreadTarget, 10, dt);
   if (rig.armSpread > 0.01) {
-    rig.arms.l?.rotateZ(1.1 * rig.armSpread);
-    rig.arms.r?.rotateZ(-1.1 * rig.armSpread);
+    const carve = dyn.bank.x * 1.1 * stanceK;
+    shoulderL?.rotateZ(1.1 * rig.armSpread + carve);
+    shoulderR?.rotateZ(-1.1 * rig.armSpread + carve);
   }
 }
 
@@ -376,9 +491,26 @@ export function addCharacterLights(scene: THREE.Scene) {
   scene.add(rim);
 }
 
+/**
+ * Render a character inside a Mapbox custom layer. First an x-ray pass that
+ * only lands where the rider is behind something already drawn (buildings),
+ * then the normal pass on top — so a rider ducking behind a tower shows as
+ * a coloured silhouette instead of vanishing.
+ */
+export function renderCharacter(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, parts: CharParts) {
+  renderer.resetState();
+  parts.shadow.visible = false;
+  scene.overrideMaterial = parts.xray;
+  renderer.render(scene, camera);
+  scene.overrideMaterial = null;
+  parts.shadow.visible = true;
+  renderer.render(scene, camera);
+}
+
 /** Free a character's GPU resources. Geometry shared with the cached model is kept. */
 export function disposeCharacter(parts: CharParts) {
   parts.disposed = true;
+  parts.xray.dispose();
   if (parts.rig) {
     parts.rig.mixer.stopAllAction();
     parts.rig.mixer.uncacheRoot(parts.rig.root);

@@ -2,12 +2,11 @@
 
 import * as THREE from 'three';
 import mapboxgl from 'mapbox-gl';
-import { buildCharacter, animateCharacter, addCharacterLights, disposeCharacter, disposeScene, type CharParts } from './runnerModel';
+import { buildCharacter, animateCharacter, addCharacterLights, disposeCharacter, disposeScene, renderCharacter, type CharParts, type RideMode } from './runnerModel';
+import { createTrack, sampleTrack, updateTrack, type Track } from './crewMotion';
 import { UNIT_METERS } from './RunnerLayer';
 
 const M_PER_DEG_LAT = 110574;
-const SNAP_M = 400;       // beyond this, teleport instead of glide
-const CATCHUP_K = 0.09;   // per-frame lerp toward the last heartbeat position
 
 export interface RemoteRider {
   id: string;
@@ -15,6 +14,11 @@ export interface RemoteRider {
   color: string;
   lng: number;
   lat: number;
+  heading?: number;  // radians, clockwise from north
+  speed?: number;    // m/s
+  turn?: number;     // rad/s
+  mode?: RideMode;
+  ageS?: number;     // how stale the fix was when the server answered
 }
 
 export interface CrewLayer extends mapboxgl.CustomLayerInterface {
@@ -27,10 +31,10 @@ interface Entry {
   color: string;
   scene: THREE.Scene;
   parts: CharParts;
-  cur: { lng: number; lat: number };
-  target: { lng: number; lat: number };
-  heading: number;
-  speed: number;
+  track: Track;
+  mode: RideMode;
+  lng: number;
+  lat: number;
 }
 
 function metersPerDegLng(lat: number) {
@@ -39,14 +43,27 @@ function metersPerDegLng(lat: number) {
 
 /**
  * CrewLayer — renders every other live rider as a 3D character. Heartbeats
- * arrive every ~2.5s; positions glide toward the latest fix each frame so
- * remote runners move smoothly and their run cycle animates while closing
- * the gap.
+ * arrive every ~2.5s with position, heading, speed and turn rate; between
+ * them each rider is dead-reckoned along their arc and corrections are
+ * blended in (see crewMotion), so remote riders move continuously instead
+ * of gliding toward stale fixes and stopping.
  */
 export function createCrewLayer(id: string): CrewLayer {
   const entries = new Map<string, Entry>();
   let renderer: THREE.WebGLRenderer | null = null;
   let camera: THREE.Camera | null = null;
+  // Local metric frame for dead reckoning, anchored on the first rider seen
+  let origin: { lng: number; lat: number } | null = null;
+
+  const now = () => performance.now() / 1000;
+  const toLocal = (lng: number, lat: number) => ({
+    x: (lng - origin!.lng) * metersPerDegLng(origin!.lat),
+    y: (lat - origin!.lat) * M_PER_DEG_LAT,
+  });
+  const toLngLat = (x: number, y: number) => ({
+    lng: origin!.lng + x / metersPerDegLng(origin!.lat),
+    lat: origin!.lat + y / M_PER_DEG_LAT,
+  });
 
   const layer: CrewLayer = {
     id,
@@ -54,12 +71,23 @@ export function createCrewLayer(id: string): CrewLayer {
     renderingMode: '3d',
 
     setPlayers(list: RemoteRider[]) {
+      const t = now();
       const seen = new Set<string>();
       for (const p of list) {
+        if (!origin) origin = { lng: p.lng, lat: p.lat };
         seen.add(p.id);
+        const { x, y } = toLocal(p.lng, p.lat);
+        const snap = {
+          x, y,
+          heading: p.heading ?? 0,
+          speed: p.speed ?? 0,
+          turn: p.turn,
+          ageS: Math.max(0, p.ageS ?? 0),
+        };
         const existing = entries.get(p.id);
         if (existing) {
-          existing.target = { lng: p.lng, lat: p.lat };
+          updateTrack(existing.track, snap, t);
+          existing.mode = p.mode ?? 'board';
         } else {
           const scene = new THREE.Scene();
           addCharacterLights(scene);
@@ -70,14 +98,13 @@ export function createCrewLayer(id: string): CrewLayer {
             color: p.color || '#00C2FF',
             scene,
             parts,
-            cur: { lng: p.lng, lat: p.lat },
-            target: { lng: p.lng, lat: p.lat },
-            heading: 0,
-            speed: 0,
+            track: createTrack(snap, t),
+            mode: p.mode ?? 'board',
+            lng: p.lng,
+            lat: p.lat,
           });
         }
       }
-      // Riders who went offline
       for (const [key, entry] of entries) {
         if (!seen.has(key)) {
           disposeCharacter(entry.parts);
@@ -89,7 +116,7 @@ export function createCrewLayer(id: string): CrewLayer {
 
     getPositions() {
       return Array.from(entries.entries()).map(([pid, e]) => ({
-        id: pid, handle: e.handle, color: e.color, lng: e.cur.lng, lat: e.cur.lat,
+        id: pid, handle: e.handle, color: e.color, lng: e.lng, lat: e.lat,
       }));
     },
 
@@ -115,36 +142,26 @@ export function createCrewLayer(id: string): CrewLayer {
     },
 
     render(_gl: WebGL2RenderingContext, matrix: number[]) {
-      if (!renderer || !camera || entries.size === 0) return;
-      const t = performance.now() / 1000;
+      if (!renderer || !camera || entries.size === 0 || !origin) return;
+      const t = now();
       const base = new THREE.Matrix4().fromArray(matrix);
 
       for (const entry of entries.values()) {
-        // Glide toward the latest heartbeat fix
-        const dLngM = (entry.target.lng - entry.cur.lng) * metersPerDegLng(entry.cur.lat);
-        const dLatM = (entry.target.lat - entry.cur.lat) * M_PER_DEG_LAT;
-        const gap = Math.hypot(dLngM, dLatM);
+        const s = sampleTrack(entry.track, t);
+        const ll = toLngLat(s.x, s.y);
+        entry.lng = ll.lng;
+        entry.lat = ll.lat;
 
-        if (gap > SNAP_M) {
-          entry.cur = { ...entry.target };
-          entry.speed = 0;
-        } else if (gap > 0.5) {
-          entry.cur.lng += (entry.target.lng - entry.cur.lng) * CATCHUP_K;
-          entry.cur.lat += (entry.target.lat - entry.cur.lat) * CATCHUP_K;
-          const targetHeading = Math.atan2(dLngM, dLatM);
-          let dh = targetHeading - entry.heading;
-          while (dh > Math.PI) dh -= Math.PI * 2;
-          while (dh < -Math.PI) dh += Math.PI * 2;
-          entry.heading += dh * 0.15;
-          entry.speed = Math.min(gap / 40, 1);
-        } else {
-          entry.speed *= 0.9; // ease back to idle
-        }
+        animateCharacter(entry.parts, {
+          t,
+          heading: s.heading,
+          speed: Math.min(s.speed01, 1),
+          jump: 0,
+          unitMeters: UNIT_METERS,
+          mode: entry.mode,
+        });
 
-        entry.parts.group.rotation.y = -entry.heading;
-        animateCharacter(entry.parts, t, entry.speed, 0, 0, UNIT_METERS);
-
-        const merc = mapboxgl.MercatorCoordinate.fromLngLat([entry.cur.lng, entry.cur.lat], 0);
+        const merc = mapboxgl.MercatorCoordinate.fromLngLat([ll.lng, ll.lat], 0);
         const scale = merc.meterInMercatorCoordinateUnits() * UNIT_METERS;
         const l = new THREE.Matrix4()
           .makeTranslation(merc.x, merc.y, merc.z ?? 0)
@@ -153,8 +170,7 @@ export function createCrewLayer(id: string): CrewLayer {
 
         (camera as THREE.Camera & { projectionMatrix: THREE.Matrix4 }).projectionMatrix =
           base.clone().multiply(l);
-        renderer.resetState();
-        renderer.render(entry.scene, camera);
+        renderCharacter(renderer, entry.scene, camera, entry.parts);
       }
     },
   };

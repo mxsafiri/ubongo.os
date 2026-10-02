@@ -2,7 +2,7 @@
 
 import * as THREE from 'three';
 import mapboxgl from 'mapbox-gl';
-import { buildCharacter, animateCharacter, addCharacterLights, disposeCharacter, disposeScene, type CharParts, type RideMode } from './runnerModel';
+import { buildCharacter, animateCharacter, addCharacterLights, disposeCharacter, disposeScene, renderCharacter, type CharParts, type RideMode } from './runnerModel';
 
 // Character proportions are in "model units" (~1.8 units tall);
 // UNIT_METERS scales one unit to city meters. ~13m tall total — big enough
@@ -35,7 +35,6 @@ export function createRunnerLayer(id: string, accentColor: string): RunnerLayer 
   let scene: THREE.Scene | null = null;
   let camera: THREE.Camera | null = null;
   let parts: CharParts | null = null;
-  let smoothHeading = 0;
 
   const layer: RunnerLayer = {
     id,
@@ -76,14 +75,15 @@ export function createRunnerLayer(id: string, accentColor: string): RunnerLayer 
 
       const t = performance.now() / 1000;
 
-      // Smooth the heading turn (shortest arc)
-      let dh = state.heading - smoothHeading;
-      while (dh > Math.PI) dh -= Math.PI * 2;
-      while (dh < -Math.PI) dh += Math.PI * 2;
-      smoothHeading += dh * 0.18;
-
-      parts.group.rotation.y = -smoothHeading;
-      animateCharacter(parts, t, state.speed, state.lean, state.jump, UNIT_METERS, state.mode, state.crashed);
+      animateCharacter(parts, {
+        t,
+        heading: state.heading,
+        speed: state.speed,
+        jump: state.jump,
+        unitMeters: UNIT_METERS,
+        mode: state.mode,
+        crashed: state.crashed,
+      });
 
       const merc = mapboxgl.MercatorCoordinate.fromLngLat([state.lng, state.lat], 0);
       const scale = merc.meterInMercatorCoordinateUnits() * UNIT_METERS;
@@ -95,8 +95,7 @@ export function createRunnerLayer(id: string, accentColor: string): RunnerLayer 
         .multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2));
 
       (camera as THREE.Camera & { projectionMatrix: THREE.Matrix4 }).projectionMatrix = m.multiply(l);
-      renderer.resetState();
-      renderer.render(scene, camera);
+      renderCharacter(renderer, scene, camera, parts);
     },
   };
 
