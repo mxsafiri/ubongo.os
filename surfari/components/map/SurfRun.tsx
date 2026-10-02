@@ -8,6 +8,8 @@ import { sfx } from '@/lib/game/sfx';
 import { createRunnerLayer } from './RunnerLayer';
 import { createCrewLayer } from './CrewLayer';
 import { ChaseCamera, createWake } from './runFx';
+import { createChaserLayer } from './ChaserLayer';
+import { CHASER, createChaseWorld, stepChase, whip, whipCooldown, type ChaseWorld } from './chaserAI';
 
 /* ── Movement physics (all rates are per-second; frame-rate independent) ── */
 const MAX_SPEED = 74;         // m/s on the board
@@ -89,6 +91,11 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
   // Chase camera (framing, speed pull-back, turn aim, impact shake) — see runFx
   const [chase] = useState(() => new ChaseCamera());
   const speedFxRef = useRef<HTMLDivElement>(null);
+  // Rival crew: threat arrows, the whip button's cooldown ring, bonus pop-ups
+  const threatRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const whipBtnRef = useRef<HTMLDivElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const whipRef = useRef<() => void>(() => {});
   const bodaUntilRef = useRef(0);
   const coinsRef = useRef<Coin[]>([]);
   const coinIdRef = useRef(0);
@@ -337,6 +344,67 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       obstaclesRef.current = obstaclesRef.current.filter((o) => o.id !== ob.id);
     };
 
+    /* ── Taking a hit (traffic or a rival's grab): stun, lose momentum and Tide ── */
+    const takeHit = (ts: number, trauma: number) => {
+      sfx.crash();
+      chase.addTrauma(trauma);
+      stunUntilRef.current = ts + CRASH_STUN_MS;
+      speedRef.current *= 0.15; // the hit eats your momentum
+      bodaUntilRef.current = 0; // knocked off the bike
+      const loss = Math.floor((runTideRef.current * CRASH_LOSS_PCT) / COIN_VALUE) * COIN_VALUE;
+      if (loss > 0) {
+        runTideRef.current -= loss;
+        setRunTide(runTideRef.current);
+      }
+      setCrashCount((c) => c + 1);
+    };
+
+    /* ── Rival crew ── */
+    const chasers = createChaserLayer('chaser-runners');
+    if (!map.getLayer('chaser-runners')) map.addLayer(chasers);
+    const world: ChaseWorld = createChaseWorld();
+    const origin = { lng: center.lng, lat: center.lat };
+    const mLng0 = metersPerDegLng(origin.lat);
+    const toLocal = (q: { lng: number; lat: number }) => ({
+      x: (q.lng - origin.lng) * mLng0,
+      y: (q.lat - origin.lat) * M_PER_DEG_LAT,
+    });
+    let attackUntil = 0;
+    let lastJumpH = 0;
+
+    const pop = (text: string, color: string) => {
+      const el = popRef.current;
+      if (!el) return;
+      el.textContent = text;
+      el.style.color = color;
+      el.classList.remove('surf-pop-go');
+      void el.offsetWidth; // restart the CSS animation
+      el.classList.add('surf-pop-go');
+    };
+    const bank = (amount: number) => {
+      runTideRef.current += amount;
+      setRunTide(runTideRef.current);
+    };
+    const view = () => {
+      const l = toLocal(posRef.current);
+      return { x: l.x, y: l.y, heading: headingRef.current, speed: speedRef.current, jump: lastJumpH };
+    };
+
+    whipRef.current = () => {
+      const now = performance.now();
+      if (now < stunUntilRef.current) return;
+      const hits = whip(world, view());
+      if (hits === null) return; // cooling down
+      attackUntil = now + 450;
+      sfx.whoosh();
+      if (hits.length > 0) {
+        sfx.roundWin();
+        chase.addTrauma(0.25);
+        bank(CHASER.BOUNTY * hits.length);
+        pop(`+${CHASER.BOUNTY * hits.length} KNOCKED OFF${hits.length > 1 ? ` ×${hits.length}` : ''}`, '#FFD84D');
+      }
+    };
+
     /* ── Keyboard ── */
     const setKey = (e: KeyboardEvent, down: boolean) => {
       const k = keysRef.current;
@@ -347,6 +415,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         case 'ArrowRight': case 'd': case 'D': k.right = down; break;
         case ' ': if (down) doJump(); e.preventDefault(); return;
         case 'r': case 'R': if (down) recenter(); return;
+        case 'f': case 'F': case 'e': case 'E': if (down) whipRef.current(); return;
         case 'Escape': if (down) endRunRef.current(); return;
         default: return;
       }
@@ -458,17 +527,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
               sfx.roundWin();
               chase.addTrauma(0.2);
             } else {
-              sfx.crash();
-              chase.addTrauma(0.7);
-              stunUntilRef.current = ts + CRASH_STUN_MS;
-              speedRef.current *= 0.15; // the crash eats your momentum
-              if (onBoda) bodaUntilRef.current = 0; // knocked off the bike
-              const loss = Math.floor((runTideRef.current * CRASH_LOSS_PCT) / COIN_VALUE) * COIN_VALUE;
-              if (loss > 0) {
-                runTideRef.current -= loss;
-                setRunTide(runTideRef.current);
-              }
-              setCrashCount((c) => c + 1);
+              takeHit(ts, 0.7);
             }
           }
         }
@@ -502,6 +561,64 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         yawRateRef.current += (raw - yawRateRef.current) * (1 - Math.exp(-8 * dt));
       }
       prevHeading = headingRef.current;
+
+      /* ── Rival crew: simulate, react, render, point at threats ── */
+      lastJumpH = jumpH;
+      for (const ev of stepChase(world, view(), dt, distRef.current)) {
+        if (ev.type === 'spawn') {
+          sfx.aiMove();
+          pop('RIVAL CREW ON YOUR TAIL', '#FF4757');
+        } else if (ev.type === 'caught') {
+          takeHit(ts, 0.85);
+          pop('GRABBED — −30% RUN TIDE', '#FF4757');
+        } else if (ev.type === 'dodged') {
+          sfx.hit(2);
+          bank(CHASER.DODGE_BONUS);
+          pop(`+${CHASER.DODGE_BONUS} SAILED OVER`, '#00E096');
+        } else if (ev.type === 'wipeout') {
+          sfx.roundWin();
+          bank(CHASER.WIPEOUT_BONUS);
+          pop(`+${CHASER.WIPEOUT_BONUS} WIPEOUT`, '#FFD84D');
+        } else if (ev.type === 'escaped') {
+          bank(CHASER.ESCAPE_BONUS);
+          pop(`+${CHASER.ESCAPE_BONUS} SHOOK THEM OFF`, '#00C2FF');
+        }
+      }
+      chasers.setChasers(world.chasers.map((c) => ({
+        id: c.id,
+        lng: origin.lng + c.x / mLng0,
+        lat: origin.lat + c.y / M_PER_DEG_LAT,
+        heading: c.heading,
+        speed01: c.speed / MAX_SPEED,
+        ko: c.state === 'ko',
+      })));
+      if (frame % 3 === 0) {
+        const me = toLocal(p);
+        const hunting = world.chasers
+          .filter((c) => c.state === 'chase')
+          .map((c) => ({ c, d: Math.hypot(c.x - me.x, c.y - me.y) }))
+          .sort((a, b) => a.d - b.d);
+        threatRefs.current.forEach((el, i) => {
+          if (!el) return;
+          const h = hunting[i];
+          if (!h || h.d > 420) { el.style.opacity = '0'; return; }
+          // Bearing relative to where the camera looks: 0 = ahead, π = behind
+          const rel = Math.atan2(h.c.x - me.x, h.c.y - me.y) - chase.yaw;
+          const rx = Math.sin(rel) * 42; // % of half-width
+          const ry = -Math.cos(rel) * 38;
+          el.style.opacity = String(h.d < 60 ? 1 : 0.85);
+          el.style.left = `${50 + rx}%`;
+          el.style.top = `${54 + ry}%`;
+          el.style.transform = `translate(-50%, -50%) rotate(${rel}rad)`;
+          const label = el.querySelector('span');
+          if (label) label.textContent = `${Math.round(h.d)}m`;
+          el.classList.toggle('surf-threat-close', h.d < 60);
+        });
+        if (whipBtnRef.current) {
+          const cd = whipCooldown(world) / CHASER.WHIP_COOLDOWN_S;
+          whipBtnRef.current.style.background = `conic-gradient(rgba(255,71,87,0.85) ${(1 - cd) * 360}deg, rgba(9,13,24,0.6) 0deg)`;
+        }
+      }
 
       /* ── Chase camera + speed FX. Runs every frame so it keeps settling at rest. ── */
       // A hard landing kicks the camera
@@ -552,6 +669,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         jump: jumpH,
         mode: onBoda ? 'boda' : 'board',
         crashed: ts < stunUntilRef.current,
+        attacking: ts < attackUntil,
       });
       map.triggerRepaint();
 
@@ -572,6 +690,8 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       if (map.getLayer('player-runner')) map.removeLayer('player-runner');
       if (map.getLayer('crew-runners')) map.removeLayer('crew-runners');
       wake.remove();
+      if (map.getLayer('chaser-runners')) map.removeLayer('chaser-runners');
+      whipRef.current = () => {};
       if (map.getLayer('run-coins-core')) map.removeLayer('run-coins-core');
       if (map.getLayer('run-coins-glow')) map.removeLayer('run-coins-glow');
       if (map.getSource('run-coins')) map.removeSource('run-coins');
@@ -642,6 +762,36 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
           filter: drop-shadow(0 3px 4px rgba(0,0,0,0.55)) drop-shadow(0 0 10px rgba(0,224,150,0.85));
         }
         @keyframes surf-ob-wobble { from { transform:rotate(-4deg); } to { transform:rotate(4deg); } }
+        .surf-threat {
+          position:absolute; z-index:25; pointer-events:none; opacity:0;
+          width:0; height:0; transition: opacity 0.2s;
+        }
+        .surf-threat::before {
+          content:''; position:absolute; left:-11px; top:-30px;
+          border-left:11px solid transparent; border-right:11px solid transparent;
+          border-bottom:20px solid #FF4757;
+          filter: drop-shadow(0 0 6px rgba(255,71,87,0.9));
+        }
+        .surf-threat span {
+          position:absolute; left:50%; top:-4px; transform:translateX(-50%);
+          font-family: var(--font-mono); font-size:10px; font-weight:700; color:#fff;
+          background:rgba(9,13,24,0.8); padding:1px 5px; white-space:nowrap;
+        }
+        .surf-threat-close::before { animation: surf-threat-pulse 0.35s ease-in-out infinite alternate; }
+        @keyframes surf-threat-pulse { to { transform: scale(1.35); } }
+        .surf-pop {
+          position:absolute; left:50%; top:30%; transform:translate(-50%,-50%); z-index:35;
+          font-family: var(--font-arcade); font-size:26px; letter-spacing:0.1em; white-space:nowrap;
+          text-shadow: 0 2px 10px rgba(0,0,0,0.8); pointer-events:none; opacity:0;
+        }
+        .surf-pop-go { animation: surf-pop 1.3s ease-out forwards; }
+        @keyframes surf-pop {
+          0% { opacity:0; transform:translate(-50%,-30%) scale(0.7); }
+          12% { opacity:1; transform:translate(-50%,-50%) scale(1.12); }
+          25% { transform:translate(-50%,-50%) scale(1); }
+          75% { opacity:1; }
+          100% { opacity:0; transform:translate(-50%,-90%) scale(1); }
+        }
         .surf-speedlines {
           background: repeating-conic-gradient(from 0deg at 50% 62%,
             rgba(255,255,255,0.0) 0deg 2.2deg, rgba(255,255,255,0.55) 2.6deg, rgba(255,255,255,0.0) 3deg 7deg);
@@ -750,6 +900,27 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
             transition: 'transform 0.05s linear',
           }}
         />
+      </div>
+
+      {/* Rival threat arrows — positioned and rotated from the game loop */}
+      {[0, 1, 2].map((i) => (
+        <div key={i} ref={(el) => { threatRefs.current[i] = el; }} className="surf-threat"><span /></div>
+      ))}
+      <div ref={popRef} className="surf-pop" />
+
+      {/* Tail-whip: F / E on keyboard; ring fills as the cooldown recovers */}
+      <div ref={whipBtnRef}
+        className="absolute z-30 rounded-full p-[3px]"
+        style={{ right: 106, bottom: 'calc(var(--screen-pad-bottom, 24px) + 30px)', background: 'rgba(255,71,87,0.85)' }}>
+        <button
+          className="flex flex-col items-center justify-center touch-none select-none rounded-full"
+          style={{ width: 58, height: 58, background: 'rgba(9,13,24,0.88)', backdropFilter: 'blur(6px)' }}
+          onPointerDown={(e) => { e.preventDefault(); whipRef.current(); }}
+          aria-label="Tail-whip the rider behind you"
+        >
+          <span style={{ fontFamily: 'var(--font-arcade)', fontSize: '14px', letterSpacing: '0.06em', color: '#FF4757', lineHeight: 1 }}>WHIP</span>
+          <span className="hidden lg:block" style={{ fontFamily: 'var(--font-mono)', fontSize: '8px', color: '#8BA3BE', marginTop: 2 }}>F</span>
+        </button>
       </div>
 
       {/* Mobile jump button */}

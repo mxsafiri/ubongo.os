@@ -18,6 +18,7 @@ export interface RunnerState {
   jump: number;    // meters above ground
   mode: RideMode;  // 'board' | 'boda'
   crashed: boolean; // inside the post-crash stun window
+  attacking?: boolean; // tail-whip in progress
 }
 
 export interface RunnerLayer extends mapboxgl.CustomLayerInterface {
@@ -83,6 +84,7 @@ export function createRunnerLayer(id: string, accentColor: string): RunnerLayer 
         unitMeters: UNIT_METERS,
         mode: state.mode,
         crashed: state.crashed,
+        attacking: state.attacking,
       });
 
       const merc = mapboxgl.MercatorCoordinate.fromLngLat([state.lng, state.lat], 0);

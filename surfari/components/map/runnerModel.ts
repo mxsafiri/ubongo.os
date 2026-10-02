@@ -25,7 +25,7 @@ const BODA_SEAT = 0.42;        // hip drop so the rider sits on the seat
 const CROSSFADE_S = 0.18;
 const SURF_STANCE = Math.PI * 0.42;  // sideways on the deck, like a real surfer
 
-type Clip = 'Idle' | 'Surf' | 'Jump' | 'Crash' | 'Ride';
+type Clip = 'Idle' | 'Surf' | 'Jump' | 'Crash' | 'Ride' | 'Whip';
 
 // Which clip in the model plays each state, and how
 const CLIPS: Record<Clip, { name: string; once?: boolean }> = {
@@ -34,6 +34,7 @@ const CLIPS: Record<Clip, { name: string; once?: boolean }> = {
   Jump:  { name: 'Jump', once: true },
   Crash: { name: 'Death', once: true },
   Ride:  { name: 'Sitting', once: true },
+  Whip:  { name: 'Punch', once: true },   // tail-whip at a chaser
 };
 
 interface Rig {
@@ -187,11 +188,12 @@ function setClip(rig: Rig, next: Clip) {
   rig.state = next;
 }
 
-function pickClip(speed: number, airborne: boolean, mode: RideMode, crashed: boolean): Clip {
+function pickClip(speed: number, airborne: boolean, mode: RideMode, crashed: boolean, attacking: boolean): Clip {
   if (crashed) return 'Crash';           // 1. hit reaction blocks everything
-  if (mode === 'boda') return 'Ride';    // 2. mounted
-  if (airborne) return 'Jump';           // 3. in the air
-  return speed > 0.08 ? 'Surf' : 'Idle'; // 4. on the deck
+  if (attacking) return 'Whip';          // 2. the strike plays through
+  if (mode === 'boda') return 'Ride';    // 3. mounted
+  if (airborne) return 'Jump';           // 4. in the air
+  return speed > 0.08 ? 'Surf' : 'Idle'; // 5. on the deck
 }
 
 /* ── Build ── */
@@ -327,6 +329,7 @@ export interface MotionInput {
   unitMeters: number;   // meters per model unit
   mode?: RideMode;
   crashed?: boolean;    // inside the post-crash stun window
+  attacking?: boolean;  // tail-whip in progress
 }
 
 // Tuning — all rates are per second
@@ -412,7 +415,7 @@ export function animateCharacter(parts: CharParts, m: MotionInput) {
   }
 
   /* ── Rig: state machine → clip ── */
-  setClip(rig, pickClip(m.speed, isAir, mode, crashed));
+  setClip(rig, pickClip(m.speed, isAir, mode, crashed, !!m.attacking));
   const action = rig.actions[rig.state!];
   if (rig.state === 'Surf') action.setEffectiveTimeScale(0.6 + m.speed * 0.8);
   rig.mixer.update(dt);
@@ -424,9 +427,11 @@ export function animateCharacter(parts: CharParts, m: MotionInput) {
 
   // Turn sideways on the deck while surfing; face forward otherwise
   const surfing = rig.state === 'Surf' || rig.state === 'Jump';
-  rig.stance = damp(rig.stance, surfing ? SURF_STANCE : 0, 9, dt);
+  // Whip twists round to strike behind; otherwise side-on to surf, square to idle
+  const stanceTarget = rig.state === 'Whip' ? Math.PI * 0.8 : surfing ? SURF_STANCE : 0;
+  rig.stance = damp(rig.stance, stanceTarget, rig.state === 'Whip' ? 16 : 9, dt);
   rig.root.rotation.y = rig.stance;
-  const stanceK = rig.stance / SURF_STANCE; // 0 facing forward … 1 side-on
+  const stanceK = Math.min(rig.stance / SURF_STANCE, 1); // 0 facing forward … 1 side-on
 
   /* ── Layered bone pose (after the mixer has written the clip pose) ── */
   const { shoulderL, shoulderR, abdomen, head } = rig.bones;
