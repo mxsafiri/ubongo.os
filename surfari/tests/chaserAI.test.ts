@@ -137,3 +137,55 @@ describe('tail-whip', () => {
     expect(w.chasers.some((c) => c.id === 1 || c.id === 4)).toBe(false);
   });
 });
+
+describe('rival crew and buildings', () => {
+  // Play a scripted rider against the AI in a world with walls
+  function runWorld(blocked: (x: number, y: number) => boolean, policy: (p: PlayerView, t: number, near: number) => { speed: number; yaw: number }, seed: number, seconds: number) {
+    const w = createChaseWorld(seeded(seed));
+    w.blocked = blocked;
+    const p: PlayerView = { x: 0, y: 0, heading: 0, speed: 45, jump: 0 };
+    const seen: Record<string, number> = {};
+    let playerInWall = false;
+    let dist = 0;
+    for (let f = 0; f * DT < seconds; f++) {
+      const t = f * DT;
+      const near = Math.min(Infinity, ...w.chasers.filter((c) => c.state === 'chase').map((c) => Math.hypot(c.x - p.x, c.y - p.y)));
+      const a = policy(p, t, near);
+      p.speed += (a.speed - p.speed) * (1 - Math.exp(-2.1 * DT));
+      p.heading += a.yaw * DT;
+      p.x += Math.sin(p.heading) * p.speed * DT;
+      p.y += Math.cos(p.heading) * p.speed * DT;
+      dist += p.speed * DT;
+      if (blocked(p.x, p.y)) playerInWall = true;
+      for (const e of stepChase(w, p, DT, dist)) seen[e.type] = (seen[e.type] ?? 0) + 1;
+      for (const c of w.chasers) if (c.state === 'chase') expect(Number.isFinite(c.x)).toBe(true);
+    }
+    return { seen, playerInWall };
+  }
+
+  it('never spawns inside a building, and drives a walled street without crashing itself', () => {
+    // A 120 m-wide avenue running north; solid blocks either side
+    const avenue = (x: number) => Math.abs(x) > 60;
+    const rs = SEEDS.map((s) => runWorld(avenue, () => ({ speed: 45, yaw: 0 }), s, 90));
+    expect(rs.reduce((n, r) => n + (r.seen.wipeout ?? 0), 0)).toBeLessThanOrEqual(1);
+    expect(rs.every((r) => (r.seen.caught ?? 0) >= 1)).toBe(true); // still a threat
+  });
+
+  it('a chaser lured at a wall with a late cut slams into it', () => {
+    let wipeouts = 0;
+    for (const seed of SEEDS) {
+      // A wall appears 70 m ahead once a chaser is on your tail; cut east 40 m short of it
+      let wallY = Infinity;
+      let cutAt = Infinity;
+      const blocked = (_x: number, y: number) => y > wallY && y < wallY + 40;
+      const r = runWorld(blocked, (p, t, near) => {
+        if (wallY === Infinity && near < 45) wallY = p.y + 70;
+        if (cutAt === Infinity && wallY !== Infinity && p.y > wallY - 40) cutAt = t;
+        return { speed: 60, yaw: t >= cutAt && t < cutAt + 0.8 ? 2.0 : 0 };
+      }, seed, 90);
+      expect(r.playerInWall).toBe(false);
+      wipeouts += r.seen.wipeout ?? 0;
+    }
+    expect(wipeouts).toBeGreaterThanOrEqual(SEEDS.length / 2);
+  });
+});

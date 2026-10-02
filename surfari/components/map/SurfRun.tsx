@@ -10,6 +10,8 @@ import { createCrewLayer } from './CrewLayer';
 import { ChaseCamera, createShockwave, createWake } from './runFx';
 import { createChaserLayer } from './ChaserLayer';
 import { CHASER, createChaseWorld, stepChase, whip, whipCooldown, type ChaseWorld } from './chaserAI';
+import { isBlocked, resolveRider } from './collision';
+import { createBuildingSource } from './buildingSource';
 
 /* ── Movement physics (all rates are per-second; frame-rate independent) ── */
 const MAX_SPEED = 74;         // m/s on the board
@@ -256,6 +258,9 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     heartbeat();
     const hbInterval = setInterval(heartbeat, HEARTBEAT_MS);
 
+    // Buildings are solid once the map has told us where they are (set below)
+    let blockedAt: (lng: number, lat: number) => boolean = () => false;
+
     /* ── Coin field ── */
     const spawnCoins = () => {
       const { lng, lat } = posRef.current;
@@ -332,6 +337,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       const lat = p.lat
         + (Math.cos(heading) * ahead + Math.cos(perp) * side) / M_PER_DEG_LAT;
 
+      if (blockedAt(lng, lat)) return; // no traffic inside buildings
       const emoji = OB_EMOJIS[Math.floor(Math.random() * OB_EMOJIS.length)];
       const obEl = document.createElement('div');
       obEl.innerHTML = `<div class="surf-ob${emoji === '🛵' ? ' surf-ob-ride' : ''}">${emoji}</div>`;
@@ -372,6 +378,16 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     });
     let attackUntil = 0;
     let lastJumpH = 0;
+
+    /* ── Buildings: solid walls from the live map ── */
+    const buildings = createBuildingSource(map, toLocal);
+    const toLngLat = (x: number, y: number) => ({ lng: origin.lng + x / mLng0, lat: origin.lat + y / M_PER_DEG_LAT });
+    blockedAt = (lng, lat) => {
+      const l = toLocal({ lng, lat });
+      return isBlocked(buildings.index, l.x, l.y);
+    };
+    world.blocked = (x, y) => isBlocked(buildings.index, x, y);
+    let lastScrapeMs = 0;
 
     const pop = (text: string, color: string) => {
       const el = popRef.current;
@@ -493,6 +509,29 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         p.lat += (Math.cos(headingRef.current) * step) / M_PER_DEG_LAT;
         p.lng += (Math.sin(headingRef.current) * step) / metersPerDegLng(p.lat);
         distRef.current += step;
+
+        // Walls: scrape along them, or crash into them square-on
+        if (buildings.index) {
+          const here = toLocal(p);
+          const r = resolveRider(buildings.index, {
+            x: here.x, y: here.y, heading: headingRef.current, speed: speedRef.current,
+          }, jumpH);
+          if (r.crash || r.scrape) {
+            const ll = toLngLat(r.x, r.y);
+            p.lng = ll.lng;
+            p.lat = ll.lat;
+            headingRef.current = r.heading;
+            speedRef.current = r.speed;
+            if (r.crash && ts >= stunUntilRef.current) {
+              takeHit(ts, 0.8);
+              pop('WALL!', '#FF4757');
+            } else if (r.scrape && ts - lastScrapeMs > 250) {
+              lastScrapeMs = ts;
+              chase.addTrauma(0.12);
+              sfx.miss();
+            }
+          }
+        }
         marker.setLngLat([p.lng, p.lat]);
 
         // Coin pickup
@@ -563,6 +602,23 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         yawRateRef.current += (raw - yawRateRef.current) * (1 - Math.exp(-8 * dt));
       }
       prevHeading = headingRef.current;
+
+      buildings.update(p, ts);
+      // Coins that landed inside buildings move out to open ground
+      if (frame % 45 === 0 && buildings.index) {
+        let moved = false;
+        for (const c of coinsRef.current) {
+          if (!blockedAt(c.lng, c.lat)) continue;
+          for (let i = 0; i < 6; i++) {
+            const ang = Math.random() * Math.PI * 2;
+            const d = 80 + Math.random() * COIN_FIELD_M;
+            const lng = p.lng + (Math.cos(ang) * d) / metersPerDegLng(p.lat);
+            const lat = p.lat + (Math.sin(ang) * d) / M_PER_DEG_LAT;
+            if (!blockedAt(lng, lat)) { c.lng = lng; c.lat = lat; moved = true; break; }
+          }
+        }
+        if (moved) syncCoins();
+      }
 
       /* ── Rival crew: simulate, react, render, point at threats ── */
       lastJumpH = jumpH;

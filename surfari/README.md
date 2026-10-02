@@ -28,10 +28,13 @@ TEST_DATABASE_URL=postgres://user@host/db npm test  # + Tide economy against rea
 ```
 
 - `tests/chaserAI.test.ts` — rival-crew balance: every escape route works (top speed, timed
-  jumps, well-timed cuts, tail-whip) and every failure mode still bites (cruising, stopping,
-  mistimed moves). Retuning chasers without breaking the game should keep these green.
+  jumps, well-timed cuts, tail-whip, luring into walls) and every failure mode still bites
+  (cruising, stopping, mistimed moves). Retuning chasers without breaking the game should
+  keep these green.
 - `tests/crewMotion.test.ts` — remote riders stay smooth and close to their true position.
 - `tests/motion.test.ts` — springs are stable and frame-rate independent.
+- `tests/collision.test.ts` — riders scrape along walls, crash into them square-on, clear
+  low roofs in a jump, and brushing building corners doesn't bleed speed.
 - `tests/economy.db.test.ts` — yield, builds, run payouts and heartbeats through the real API
   routes and Neon driver, in a throwaway schema. Skipped when `TEST_DATABASE_URL` is unset.
 

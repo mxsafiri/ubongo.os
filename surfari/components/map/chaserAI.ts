@@ -8,6 +8,8 @@
 //   - jump as one lunges: it whiffs under you and stumbles;
 //   - carve hard: their grip is limited (fast = wide turns), and a chaser
 //     held on the grip limit at speed for too long wipes out;
+//   - lure one into a building: they steer around walls, but at speed they
+//     can't turn in time, and hitting one is a wipeout;
 // and a tail-whip knocks one off behind you for a bounty.
 //
 // Pure logic in local meters (x east, y north), no rendering, so the
@@ -43,6 +45,11 @@ export const CHASER = {
   DODGE_BONUS: 25,        // Tide for jumping a chaser's first grab
   MAX_WHIFFS: 2,          // made a fool of twice, it gives up
   WIPEOUT_BONUS: 100,     // Tide for making one eat pavement
+  WHISKER_M: 18,          // wall probe reach at rest…
+  WHISKER_PER_MS: 0.45,   // …plus this many meters per m/s of speed
+  WHISKER_SPREAD: 0.55,   // rad between the centre probe and each side probe
+  AVOID_TURN: 1.0,        // rad of steering away from a wall ahead
+  SPAWN_TRIES: 10,
   FLEE_S: 1.4,            // after a grab they peel off
   WHIP_RANGE_M: 45,
   WHIP_HALF_ANGLE: (75 * Math.PI) / 180,
@@ -87,6 +94,8 @@ export type ChaseEvent =
 
 export interface ChaseWorld {
   chasers: Chaser[];
+  /** Is this point inside a building? (absent = open ground everywhere) */
+  blocked?: (x: number, y: number) => boolean;
   t: number;              // run time (s)
   nextSpawn: number;      // run time of the next spawn
   whipReadyAt: number;    // run time the whip is ready again
@@ -103,14 +112,23 @@ export function maxChasers(runDistanceM: number) {
   return Math.min(3, 1 + Math.floor(runDistanceM / 2500));
 }
 
-function spawn(w: ChaseWorld, p: PlayerView) {
-  const side = (w.rnd() - 0.5) * (Math.PI * 2 / 3);  // ±60° off dead astern
-  const ang = p.heading + Math.PI + side;
-  const d = CHASER.SPAWN_BEHIND_M * (0.85 + w.rnd() * 0.3);
+function spawn(w: ChaseWorld, p: PlayerView): Chaser | null {
+  // Behind the player, ±60° off dead astern, on open ground
+  let x = 0;
+  let y = 0;
+  let found = false;
+  for (let i = 0; i < CHASER.SPAWN_TRIES && !found; i++) {
+    const ang = p.heading + Math.PI + (w.rnd() - 0.5) * (Math.PI * 2 / 3);
+    const d = CHASER.SPAWN_BEHIND_M * (0.85 + w.rnd() * 0.3);
+    x = p.x + Math.sin(ang) * d;
+    y = p.y + Math.cos(ang) * d;
+    found = !w.blocked?.(x, y);
+  }
+  if (!found) return null;
   const c: Chaser = {
     id: w.nextId++,
-    x: p.x + Math.sin(ang) * d,
-    y: p.y + Math.cos(ang) * d,
+    x,
+    y,
     heading: p.heading,
     speed: CHASER.PATROL_SPEED,
     state: 'patrol',
@@ -147,8 +165,9 @@ export function stepChase(w: ChaseWorld, p: PlayerView, dt: number, runDistanceM
   // Spawning: only while actually riding
   const active = w.chasers.filter((c) => c.state === 'patrol' || c.state === 'chase').length;
   if (w.t >= w.nextSpawn) {
-    if (p.speed >= CHASER.MIN_PLAYER_SPEED && active < maxChasers(runDistanceM)) {
-      events.push({ type: 'spawn', id: spawn(w, p).id });
+    const c = p.speed >= CHASER.MIN_PLAYER_SPEED && active < maxChasers(runDistanceM) ? spawn(w, p) : null;
+    if (c) {
+      events.push({ type: 'spawn', id: c.id });
       w.nextSpawn = w.t + CHASER.SPAWN_EVERY_S * (0.75 + w.rnd() * 0.5);
     } else {
       w.nextSpawn = w.t + 2; // try again shortly
@@ -207,7 +226,18 @@ export function stepChase(w: ChaseWorld, p: PlayerView, dt: number, runDistanceM
         }
       }
 
-      const want = Math.atan2(aimX - c.x, aimY - c.y);
+      let want = Math.atan2(aimX - c.x, aimY - c.y);
+      // Whiskers: if the way ahead is a wall, steer for the clearer side
+      if (w.blocked) {
+        const reach = CHASER.WHISKER_M + c.speed * CHASER.WHISKER_PER_MS;
+        const probe = (a: number) => w.blocked!(c.x + Math.sin(a) * reach, c.y + Math.cos(a) * reach);
+        if (probe(c.heading)) {
+          const left = probe(c.heading - CHASER.WHISKER_SPREAD);
+          const right = probe(c.heading + CHASER.WHISKER_SPREAD);
+          const away = !left && right ? -1 : left && !right ? 1 : wrapAngle(want - c.heading) < 0 ? -1 : 1;
+          want = c.heading + away * CHASER.AVOID_TURN;
+        }
+      }
       const turn = turnRate(c.speed) * dt;
       const saturated = Math.abs(wrapAngle(want - c.heading)) > turn; // wants more turn than grip allows
       c.heading += clamp(wrapAngle(want - c.heading), -turn, turn);
@@ -257,6 +287,13 @@ export function stepChase(w: ChaseWorld, p: PlayerView, dt: number, runDistanceM
 
     c.x += Math.sin(c.heading) * c.speed * dt;
     c.y += Math.cos(c.heading) * c.speed * dt;
+
+    // Into a building: wiped out
+    if ((c.state === 'chase' || c.state === 'patrol') && w.blocked?.(c.x, c.y)) {
+      events.push({ type: 'wipeout', id: c.id });
+      setState(c, 'ko');
+      c.speed = 0;
+    }
   }
 
   w.chasers = w.chasers.filter(
