@@ -151,3 +151,22 @@ html, body { height: 100%; }
 
 .mapboxgl-canvas { outline: none; }
 .mapboxgl-ctrl-attrib, .mapboxgl-ctrl-logo { display: none !important; }
+
+/* ── Surfari on phones ──
+   No grey tap flash or long-press callout on game controls, no accidental
+   text selection while steering, and no pull-to-refresh / rubber-band
+   scroll reloading the page mid-run. */
+.surfari-root,
+.surfari-root * {
+  -webkit-tap-highlight-color: transparent;
+}
+.surfari-root button,
+.surfari-root [role='button'] {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+html:has(.surfari-root),
+body:has(.surfari-root) {
+  overscroll-behavior: none;
+}

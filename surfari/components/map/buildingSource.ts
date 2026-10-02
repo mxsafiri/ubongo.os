@@ -13,7 +13,7 @@ import { BuildingIndex, makeFootprint, type Footprint } from './collision';
 // scroll off-screen behind you. If the map has no building data at all,
 // the index stays null and riders simply pass through — never a crash.
 
-const REFRESH_MS = 600;
+const REFRESH_MS = 600;           // default; mobile quality may slow it
 const KEEP_M = 700;              // forget buildings this far from the rider
 const MAX_FOOTPRINTS = 6000;
 
@@ -26,6 +26,7 @@ export interface BuildingSource {
   readonly index: BuildingIndex | null;
   readonly mode: 'featureset' | 'layers' | 'none' | 'pending';
   update(rider: LngLat, nowMs: number): void;
+  setRefreshMs(ms: number): void;
 }
 
 export function createBuildingSource(
@@ -38,6 +39,17 @@ export function createBuildingSource(
   let mode: BuildingSource['mode'] = 'pending';
   let lastMs = -Infinity;
   let featuresetFailed = false;
+  let refreshMs = REFRESH_MS;
+
+  // Only the lower 70% of the view: with the chase camera's pitch the top of
+  // the screen is the far horizon — hundreds of tiny buildings we'll never
+  // reach before the next refresh, and the bulk of the query cost.
+  const nearBox = (): [mapboxgl.PointLike, mapboxgl.PointLike] => {
+    const c = map.getCanvas();
+    const w = c.clientWidth;
+    const h = c.clientHeight;
+    return [[0, h * 0.3], [w, h]];
+  };
 
   const hasBasemap = () => !!map.getStyle()?.imports?.some((i) => i.id === 'basemap');
 
@@ -51,7 +63,7 @@ export function createBuildingSource(
   const query = (): Feature[] | null => {
     if (hasBasemap() && !featuresetFailed) {
       try {
-        const feats = map.queryRenderedFeatures({ target: { featuresetId: 'buildings', importId: 'basemap' } });
+        const feats = map.queryRenderedFeatures(nearBox(), { target: { featuresetId: 'buildings', importId: 'basemap' } });
         mode = 'featureset';
         return feats as unknown as Feature[];
       } catch (err) {
@@ -65,7 +77,7 @@ export function createBuildingSource(
       return null;
     }
     mode = 'layers';
-    return map.queryRenderedFeatures({ layers }) as unknown as Feature[];
+    return map.queryRenderedFeatures(nearBox(), { layers }) as unknown as Feature[];
   };
 
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -97,8 +109,12 @@ export function createBuildingSource(
     get index() { return index; },
     get mode() { return mode; },
 
+    setRefreshMs(ms) {
+      refreshMs = ms;
+    },
+
     update(rider, nowMs) {
-      if (nowMs - lastMs < REFRESH_MS || mode === 'none') return;
+      if (nowMs - lastMs < refreshMs || mode === 'none') return;
       lastMs = nowMs;
       let feats: Feature[] | null;
       try {

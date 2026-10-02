@@ -12,6 +12,8 @@ import { createChaserLayer } from './ChaserLayer';
 import { CHASER, createChaseWorld, stepChase, whip, whipCooldown, type ChaseWorld } from './chaserAI';
 import { isBlocked, resolveRider } from './collision';
 import { createBuildingSource } from './buildingSource';
+import { QualityGovernor, deviceQualityHints, initialQuality, type QualitySettings } from '@/lib/game/quality';
+import { setMapPixelRatioCap } from '@/lib/map/pixelRatio';
 
 /* ── Movement physics (all rates are per-second; frame-rate independent) ── */
 const MAX_SPEED = 74;         // m/s on the board
@@ -47,6 +49,13 @@ const BODA_RIDE_MS = 8000;    // boost duration after mounting a boda
 const HEARTBEAT_MS = 1250;    // position + motion broadcast while riding
 
 const M_PER_DEG_LAT = 110574;
+
+/** Haptic tap on phones that support it (Android); silently nothing elsewhere. */
+function buzz(pattern: number | number[]) {
+  try {
+    navigator.vibrate?.(pattern);
+  } catch { /* not allowed here */ }
+}
 
 interface Coin { id: number; lng: number; lat: number }
 interface Obstacle { id: number; lng: number; lat: number; emoji: string; marker: mapboxgl.Marker }
@@ -364,6 +373,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         setRunTide(runTideRef.current);
       }
       setCrashCount((c) => c + 1);
+      buzz(70);
     };
 
     /* ── Rival crew ── */
@@ -388,6 +398,19 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     };
     world.blocked = (x, y) => isBlocked(buildings.index, x, y);
     let lastScrapeMs = 0;
+
+    /* ── Adaptive quality: phones start lower and the governor adjusts to real fps ── */
+    const governor = new QualityGovernor(initialQuality(deviceQualityHints()));
+    let wakeEvery = 2;
+    let speedLinesOn = true;
+    const applyQuality = (q: QualitySettings) => {
+      setMapPixelRatioCap(q.maxPixelRatio, map);
+      crew.setQuality({ max: q.crewMax, xray: q.crewXray });
+      buildings.setRefreshMs(q.buildingQueryMs);
+      wakeEvery = q.wakeEvery;
+      speedLinesOn = q.speedLines;
+    };
+    applyQuality(governor.settings);
 
     const pop = (text: string, color: string) => {
       const el = popRef.current;
@@ -416,6 +439,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       shock.trigger(posRef.current, headingRef.current);
       sfx.whoosh();
       if (hits.length > 0) {
+        buzz([18, 30, 18]);
         sfx.roundWin();
         chase.addTrauma(0.25);
         bank(CHASER.BOUNTY * hits.length);
@@ -634,6 +658,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
           bank(CHASER.DODGE_BONUS);
           pop(`+${CHASER.DODGE_BONUS} SAILED OVER`, '#00E096');
         } else if (ev.type === 'wipeout') {
+          buzz(25);
           sfx.roundWin();
           bank(CHASER.WIPEOUT_BONUS);
           pop(`+${CHASER.WIPEOUT_BONUS} WIPEOUT`, '#FFD84D');
@@ -684,11 +709,12 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       prevJumpH = jumpH;
       if (onBoda && moving) chase.rumble(0.16 * Math.min(speed01, 1));
       chase.update(map, p, headingRef.current, speed01, jumpH, dt, ts / 1000);
-      if (frame % 2 === 0) wake.push(p, moving ? speed01 : 0);
+      if (governor.frame(dt)) applyQuality(governor.settings);
+      if (frame % wakeEvery === 0) wake.push(p, moving ? speed01 : 0);
       shock.update(ts);
       if (frame % 4 === 0 && speedFxRef.current) {
         const k = Math.min(Math.max((speed01 - 0.5) / 0.6, 0), 1);
-        speedFxRef.current.style.opacity = String(k * (onBoda ? 0.85 : 0.6));
+        speedFxRef.current.style.opacity = speedLinesOn ? String(k * (onBoda ? 0.85 : 0.6)) : '0';
       }
 
       // Remote riders' name tags glued to interpolated positions
@@ -749,6 +775,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       if (map.getLayer('player-runner')) map.removeLayer('player-runner');
       if (map.getLayer('crew-runners')) map.removeLayer('crew-runners');
       wake.remove();
+      setMapPixelRatioCap(2, map); // back to the browsing default
       shock.remove();
       if (map.getLayer('chaser-runners')) map.removeLayer('chaser-runners');
       whipRef.current = () => {};
@@ -888,8 +915,9 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       )}
 
       {/* Run HUD chip */}
-      <div className="absolute top-4 left-4 z-30 flex items-center gap-2.5 px-3 py-2"
+      <div className="absolute left-4 z-30 flex items-center gap-2.5 px-3 py-2"
         style={{
+          top: 'calc(var(--safe-top, 0px) + 16px)',
           background: 'rgba(9,13,24,0.85)',
           border: '1px solid rgba(255,184,0,0.4)',
           backdropFilter: 'blur(10px)',

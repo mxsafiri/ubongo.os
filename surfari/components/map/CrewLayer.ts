@@ -23,6 +23,8 @@ export interface RemoteRider {
 
 export interface CrewLayer extends mapboxgl.CustomLayerInterface {
   setPlayers(list: RemoteRider[]): void;
+  /** Mobile quality: draw at most `max` riders in 3D (nearest first); x-ray on/off. */
+  setQuality(q: { max: number; xray: boolean }): void;
   getPositions(): { id: string; handle: string; color: string; lng: number; lat: number }[];
 }
 
@@ -35,6 +37,7 @@ interface Entry {
   mode: RideMode;
   lng: number;
   lat: number;
+  sample?: ReturnType<typeof sampleTrack>;
 }
 
 function metersPerDegLng(lat: number) {
@@ -54,6 +57,8 @@ export function createCrewLayer(id: string): CrewLayer {
   let camera: THREE.Camera | null = null;
   // Local metric frame for dead reckoning, anchored on the first rider seen
   let origin: { lng: number; lat: number } | null = null;
+  let quality = { max: 12, xray: true };
+  let mapRef: mapboxgl.Map | null = null;
 
   const now = () => performance.now() / 1000;
   const toLocal = (lng: number, lat: number) => ({
@@ -114,6 +119,10 @@ export function createCrewLayer(id: string): CrewLayer {
       }
     },
 
+    setQuality(q) {
+      quality = q;
+    },
+
     getPositions() {
       return Array.from(entries.entries()).map(([pid, e]) => ({
         id: pid, handle: e.handle, color: e.color, lng: e.lng, lat: e.lat,
@@ -121,6 +130,7 @@ export function createCrewLayer(id: string): CrewLayer {
     },
 
     onAdd(map: mapboxgl.Map, gl: WebGL2RenderingContext) {
+      mapRef = map;
       camera = new THREE.Camera();
       renderer = new THREE.WebGLRenderer({
         canvas: map.getCanvas(),
@@ -146,11 +156,22 @@ export function createCrewLayer(id: string): CrewLayer {
       const t = now();
       const base = new THREE.Matrix4().fromArray(matrix);
 
+      // Move everyone (positions feed name tags), but only draw the nearest few in 3D
       for (const entry of entries.values()) {
         const s = sampleTrack(entry.track, t);
         const ll = toLngLat(s.x, s.y);
         entry.lng = ll.lng;
         entry.lat = ll.lat;
+        entry.sample = s;
+      }
+      const c = mapRef?.getCenter();
+      const drawn = [...entries.values()]
+        .sort((a, b) => (c ? Math.hypot(a.lng - c.lng, a.lat - c.lat) - Math.hypot(b.lng - c.lng, b.lat - c.lat) : 0))
+        .slice(0, quality.max);
+
+      for (const entry of drawn) {
+        const s = entry.sample!;
+        const ll = { lng: entry.lng, lat: entry.lat };
 
         animateCharacter(entry.parts, {
           t,
@@ -170,7 +191,7 @@ export function createCrewLayer(id: string): CrewLayer {
 
         (camera as THREE.Camera & { projectionMatrix: THREE.Matrix4 }).projectionMatrix =
           base.clone().multiply(l);
-        renderCharacter(renderer, entry.scene, camera, entry.parts);
+        renderCharacter(renderer, entry.scene, camera, entry.parts, quality.xray);
       }
     },
   };

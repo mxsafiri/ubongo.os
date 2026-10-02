@@ -8,7 +8,14 @@ import { useGameStore } from '@/store/game';
 import { DAR_ZONES, ZONE_TIER_COLORS, ZONE_STATE_COLORS } from '@/lib/game/zones';
 import { MAP_CONFIG } from '@/lib/map/style';
 import { ZonePopup } from '@/components/game/ZonePopup';
-import { SurfRun } from './SurfRun';
+import dynamic from 'next/dynamic';
+import { setMapPixelRatioCap } from '@/lib/map/pixelRatio';
+
+// Surf Run brings three.js, the model loader and the game loop — load it
+// only when needed (and prefetch it once the map is up), so the map paints
+// sooner on phones.
+const loadSurfRun = () => import('./SurfRun');
+const SurfRun = dynamic(() => loadSurfRun().then((m) => m.SurfRun), { ssr: false });
 import { selectActiveTab } from '@/store/game';
 
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!;
@@ -406,6 +413,8 @@ export default function CityMap() {
   useEffect(() => {
     if (mapRef.current || !mapContainer.current) return;
 
+    // 3× phone screens cost 9× the pixels of 1× for little visible gain
+    setMapPixelRatioCap(2);
     const map = new mapboxgl.Map({
       container: mapContainer.current,
       style: 'mapbox://styles/mapbox/standard',
@@ -503,6 +512,13 @@ export default function CityMap() {
       setMapObj(map);
 
       setMapLoaded(true);
+      // Warm up Surf Run (code + rider model) while the player looks around
+      map.once('idle', () => {
+        loadSurfRun()
+          .then(() => import('./runnerModel'))
+          .then((m) => m.loadRunnerModel())
+          .catch(() => { /* fetched again on demand */ });
+      });
     });
 
     // Fallback — mark loaded even on style error so the UI isn't stuck

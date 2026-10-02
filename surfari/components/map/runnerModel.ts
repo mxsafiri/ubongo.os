@@ -502,13 +502,15 @@ export function addCharacterLights(scene: THREE.Scene) {
  * then the normal pass on top — so a rider ducking behind a tower shows as
  * a coloured silhouette instead of vanishing.
  */
-export function renderCharacter(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, parts: CharParts) {
+export function renderCharacter(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, parts: CharParts, xray = true) {
   renderer.resetState();
-  parts.shadow.visible = false;
-  scene.overrideMaterial = parts.xray;
-  renderer.render(scene, camera);
-  scene.overrideMaterial = null;
-  parts.shadow.visible = true;
+  if (xray) {
+    parts.shadow.visible = false;
+    scene.overrideMaterial = parts.xray;
+    renderer.render(scene, camera);
+    scene.overrideMaterial = null;
+    parts.shadow.visible = true;
+  }
   renderer.render(scene, camera);
 }
 
