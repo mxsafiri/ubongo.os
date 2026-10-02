@@ -43,7 +43,7 @@ function metersPerDegLng(lat: number) {
 
 /**
  * CrewLayer — renders every other live rider as a 3D character. Heartbeats
- * arrive every ~2.5s with position, heading, speed and turn rate; between
+ * arrive every ~1.25s with position, heading, speed and turn rate; between
  * them each rider is dead-reckoned along their arc and corrections are
  * blended in (see crewMotion), so remote riders move continuously instead
  * of gliding toward stale fixes and stopping.

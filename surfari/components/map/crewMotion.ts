@@ -1,6 +1,6 @@
 // Dead reckoning for remote riders.
 //
-// Heartbeats arrive every ~2.5 s with position, heading and speed. Between
+// Heartbeats arrive every ~1.25 s with position, heading and speed. Between
 // them we extrapolate along the reported velocity, and when a new fix lands
 // we don't snap or chase it — we blend from where the rider *appears* to be
 // toward where the new velocity says they are (projective velocity

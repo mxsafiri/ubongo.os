@@ -39,6 +39,9 @@ const CRASH_STUN_MS = 900;
 const CRASH_LOSS_PCT = 0.3;
 const BODA_RIDE_MS = 8000;    // boost duration after mounting a boda
 
+/* ── Multiplayer ── */
+const HEARTBEAT_MS = 1250;    // position + motion broadcast while riding
+
 const M_PER_DEG_LAT = 110574;
 
 interface Coin { id: number; lng: number; lat: number }
@@ -199,7 +202,13 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     if (map.getLayer('real-players')) map.setLayoutProperty('real-players', 'visibility', 'none');
 
     const remoteTags = new Map<string, mapboxgl.Marker>();
+    // 1.25 s keeps remote riders within ~20 m of truth (see crewMotion).
+    // Skip a beat while one is in flight so slow responses can't pile up
+    // or land out of order.
+    let hbInFlight = false;
     const heartbeat = async () => {
+      if (hbInFlight) return;
+      hbInFlight = true;
       try {
         const p = posRef.current;
         const res = await fetch('/api/game/players/position', {
@@ -233,10 +242,12 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
               ageS: r.age_s ?? 0,
             })),
         );
-      } catch { /* heartbeat is best-effort */ }
+      } catch { /* heartbeat is best-effort */ } finally {
+        hbInFlight = false;
+      }
     };
     heartbeat();
-    const hbInterval = setInterval(heartbeat, 2500);
+    const hbInterval = setInterval(heartbeat, HEARTBEAT_MS);
 
     /* ── Coin field ── */
     const spawnCoins = () => {
