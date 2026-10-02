@@ -19,53 +19,78 @@ function groundPlacement(map: mapboxgl.Map): { slot: { slot?: string }; before?:
 }
 
 /* ── Chase camera ───────────────────────────────────────────────────────
-   Subway-Surfers framing (behind, above, looking down the street) that
-   reacts to the ride: pulls back and looks further ahead with speed,
-   swings its aim into turns, rises with jumps, and shakes on impacts
-   (trauma model: shake = trauma², trauma decays over time). */
+   Street-level framing: low behind the rider, looking down the street,
+   with the rider in the upper-middle of the screen (clear of the thumbs).
+   It pulls back and looks further ahead with speed, swings its aim into
+   turns, rises with jumps and shakes on impacts (trauma model: shake =
+   trauma², decaying over time). When a building would come between the
+   camera and the rider, the camera slides in closer instead of going
+   through the wall. */
 
-const CAM_BACK_M = 50;
-const CAM_ALT_M = 46;
-const LOOK_AHEAD_M = 12;
-const SPEED_BACK_M = 22;      // extra pull-back at top speed
-const SPEED_ALT_M = 10;       // extra height at top speed
-const SPEED_AHEAD_M = 28;     // extra look-ahead at top speed
-const TURN_AIM_M = 16;        // aim offset into a full-lock turn
+const CAM_BACK_M = 36;
+const CAM_ALT_M = 14;
+const LOOK_AHEAD_M = 20;
+const SPEED_BACK_M = 10;      // extra pull-back at top speed
+const SPEED_ALT_M = 3;        // extra height at top speed
+const SPEED_AHEAD_M = 16;     // extra look-ahead at top speed
+const TURN_AIM_M = 14;        // aim offset into a full-lock turn
+const MIN_BACK_M = 9;         // closest the camera comes when boxed in by walls
 const POS_RATE = 3.2;
 const TGT_RATE = 6.0;
+const BACK_OUT_RATE = 1.6;    // ease back out once the wall has passed
 const TRAUMA_DECAY = 1.5;     // per second
-const SHAKE_M = 5;            // max positional shake
+const SHAKE_M = 3;            // max positional shake
+
+/** Free distance behind the rider (m) along `heading + π`, capped at `maxBack`, for a camera at `alt`. */
+export type CameraClearance = (p: LngLat, heading: number, maxBack: number, alt: number) => number;
 
 export class ChaseCamera {
   pos: LngLat = { lng: 0, lat: 0 };
   tgt: LngLat = { lng: 0, lat: 0 };
   alt = CAM_ALT_M;
-  /** Yaw the camera is actually looking along — the joystick steers relative to this. */
+  /** Yaw the camera is actually looking along. */
   yaw = 0;
+  private clearance: CameraClearance | null = null;
   private speedK = 0;
   private turnK = 0;
   private trauma = 0;
   private lastHeading = 0;
+  private backK = 1;            // share of the full back distance currently allowed
 
   private desired(p: LngLat, heading: number, jumpM: number) {
     const mLng = metersPerDegLng(p.lat);
     const fx = Math.sin(heading);
     const fy = Math.cos(heading);
-    const back = CAM_BACK_M + SPEED_BACK_M * this.speedK;
+    const back = (CAM_BACK_M + SPEED_BACK_M * this.speedK) * this.backK;
     const ahead = LOOK_AHEAD_M + SPEED_AHEAD_M * this.speedK;
     const side = TURN_AIM_M * this.turnK; // +right
+    // Boxed in: come down with the camera so the angle onto the rider holds
+    const alt = Math.max(5, (CAM_ALT_M + SPEED_ALT_M * this.speedK) * (0.4 + 0.6 * this.backK));
     return {
       pos: { lng: p.lng - (fx * back) / mLng, lat: p.lat - (fy * back) / M_PER_DEG_LAT },
       tgt: {
         lng: p.lng + (fx * ahead + fy * side) / mLng,
         lat: p.lat + (fy * ahead - fx * side) / M_PER_DEG_LAT,
       },
-      alt: CAM_ALT_M + SPEED_ALT_M * this.speedK + jumpM * 0.45,
+      alt: alt + jumpM * 0.45,
     };
+  }
+
+  private allowedBackK(p: LngLat, heading: number) {
+    if (!this.clearance) return 1;
+    const full = CAM_BACK_M + SPEED_BACK_M * this.speedK;
+    const free = this.clearance(p, heading, full, CAM_ALT_M + SPEED_ALT_M * this.speedK);
+    return clamp(Math.max(free - 2, MIN_BACK_M) / full, MIN_BACK_M / full, 1);
+  }
+
+  /** Give the camera a way to see walls, so it never ends up inside one. */
+  setClearance(fn: CameraClearance | null) {
+    this.clearance = fn;
   }
 
   /** Jump straight to the framing — the one-tap answer to "where am I?" */
   snap(p: LngLat, heading: number) {
+    this.backK = this.allowedBackK(p, heading);
     const d = this.desired(p, heading, 0);
     this.pos = d.pos;
     this.tgt = d.tgt;
@@ -89,6 +114,10 @@ export class ChaseCamera {
     this.speedK = damp(this.speedK, clamp(speed01, 0, 1.2), 1.8, dt);
     this.turnK = damp(this.turnK, clamp(yawRate * speed01 * 0.5, -1, 1), 3, dt);
     this.trauma = Math.max(0, this.trauma - TRAUMA_DECAY * dt);
+
+    // Walls behind: pull in at once (never clip through), ease back out
+    const allowed = this.allowedBackK(p, heading);
+    this.backK = allowed < this.backK ? allowed : damp(this.backK, allowed, BACK_OUT_RATE, dt);
 
     const d = this.desired(p, heading, jumpM);
     const kc = 1 - Math.exp(-POS_RATE * dt);
@@ -114,7 +143,7 @@ export class ChaseCamera {
     ];
 
     const cam = map.getFreeCameraOptions();
-    cam.position = mapboxgl.MercatorCoordinate.fromLngLat(camLngLat, this.alt + sz);
+    cam.position = mapboxgl.MercatorCoordinate.fromLngLat(camLngLat, Math.max(2, this.alt + sz));
     cam.lookAtPoint([this.tgt.lng, this.tgt.lat]);
     map.setFreeCameraOptions(cam);
   }

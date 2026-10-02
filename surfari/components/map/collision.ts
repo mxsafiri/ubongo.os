@@ -208,3 +208,58 @@ export function resolveRider(index: BuildingIndex | null, m: RiderMove, airborne
   }
   return out;
 }
+
+/**
+ * How far you can travel from (x, y) along (dx, dy) — a unit vector —
+ * before entering a building taller than `minHeight`. Buildings of unknown
+ * height count as tall. Sampled every `step` meters up to `maxD`.
+ */
+export function clearDistance(
+  index: BuildingIndex | null, x: number, y: number, dx: number, dy: number,
+  maxD: number, step = 2, minHeight = 0,
+): number {
+  if (!index) return maxD;
+  for (let d = step; d <= maxD; d += step) {
+    const px = x + dx * d, py = y + dy * d;
+    for (const f of index.near(px, py, 0)) {
+      if ((f.height ?? Infinity) > minHeight && pointInRing(f.ring, px, py)) return d - step;
+    }
+  }
+  return maxD;
+}
+
+/**
+ * Nearest spot to (x, y) where a rider of radius `r` fits, searching outward
+ * in rings. Returns the start point unchanged when it's already clear, or
+ * null when nothing within `maxR` is open.
+ */
+export function findOpenSpot(index: BuildingIndex | null, x: number, y: number, r: number = COLLIDE.RIDER_RADIUS_M, maxR = 200) {
+  if (!isBlocked(index, x, y, r)) return { x, y };
+  for (let d = 4; d <= maxR; d += 4) {
+    const n = Math.max(8, Math.round((2 * Math.PI * d) / 6));
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      const px = x + Math.sin(a) * d, py = y + Math.cos(a) * d;
+      if (!isBlocked(index, px, py, r)) return { x: px, y: py };
+    }
+  }
+  return null;
+}
+
+/**
+ * The heading (rad, clockwise from north) with the longest open run from
+ * (x, y) — so a fresh ride points down a street, not into a wall. Ties go
+ * to the direction closest to `preferred`.
+ */
+export function openHeading(index: BuildingIndex | null, x: number, y: number, preferred = 0, lookM = 240, dirs = 24) {
+  if (!index) return preferred;
+  let best = preferred, bestScore = -Infinity;
+  for (let i = 0; i < dirs; i++) {
+    const h = preferred + (i / dirs) * Math.PI * 2;
+    const free = clearDistance(index, x, y, Math.sin(h), Math.cos(h), lookM, 4);
+    const off = Math.abs(Math.atan2(Math.sin(h - preferred), Math.cos(h - preferred)));
+    const score = free - off * 4; // a few meters of run is worth less than facing where you were
+    if (score > bestScore) { bestScore = score; best = h; }
+  }
+  return best;
+}

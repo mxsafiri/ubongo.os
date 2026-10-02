@@ -5,9 +5,10 @@ import mapboxgl from 'mapbox-gl';
 import { buildCharacter, animateCharacter, addCharacterLights, disposeCharacter, disposeScene, renderCharacter, type CharParts, type RideMode } from './runnerModel';
 
 // Character proportions are in "model units" (~1.8 units tall);
-// UNIT_METERS scales one unit to city meters. ~13m tall total — big enough
-// to read like a game character against 3D buildings at chase zoom.
-export const UNIT_METERS = 7;
+// UNIT_METERS scales one unit to city meters. ~6m tall total — larger than
+// life so the rider reads clearly from the street-level chase camera, small
+// enough to fit Dar's streets.
+export const UNIT_METERS = 3.2;
 
 export interface RunnerState {
   lng: number;

@@ -26,6 +26,7 @@ interface GameStore {
   mapLoaded: boolean;
   plant_site: { lng: number; lat: number } | null;
   sidebarCollapsed: boolean;
+  riding: boolean;              // Cruise Mode: the ride owns the whole screen
 
   // Actions
   setPhase: (phase: GamePhase) => void;
@@ -54,6 +55,7 @@ interface GameStore {
   plantTurf: () => Promise<{ zone: Zone } | { error: string }>;
   buildZone: (zoneId: string) => Promise<boolean>;
   setSidebarCollapsed: (collapsed: boolean) => void;
+  setRiding: (riding: boolean) => void;
 }
 
 export const useGameStore = create<GameStore>()(
@@ -71,6 +73,7 @@ export const useGameStore = create<GameStore>()(
     mapLoaded: false,
     plant_site: null,
     sidebarCollapsed: false,
+    riding: false,
 
     setPhase: (phase) => set({ phase }),
 
@@ -256,6 +259,9 @@ export const useGameStore = create<GameStore>()(
 
     setSidebarCollapsed: (sidebarCollapsed) => set({ sidebarCollapsed }),
 
+    // Riding always happens on the map tab, with nothing else on screen
+    setRiding: (riding) => set(riding ? { riding, activeTab: 'map', plant_site: null, selected_zone: null } : { riding }),
+
     buildZone: async (zoneId: string) => {
       const { player } = get();
       if (!player) return false;
@@ -329,3 +335,4 @@ export const selectMapLoaded = (s: GameStore) => s.mapLoaded;
 export const selectTheme = (s: GameStore) => s.theme;
 export const selectPlantSite = (s: GameStore) => s.plant_site;
 export const selectSidebarCollapsed = (s: GameStore) => s.sidebarCollapsed;
+export const selectRiding = (s: GameStore) => s.riding;

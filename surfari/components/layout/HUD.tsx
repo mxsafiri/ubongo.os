@@ -115,7 +115,10 @@ export default function HUD() {
         style={{
           paddingBottom: 'calc(var(--safe-bottom) + 8px)',
           paddingTop: '8px',
-          background: `linear-gradient(to top, var(--hud-bottom) 60%, transparent 100%)`,
+          // Solid bar: the map stops at its edge instead of fading underneath
+          background: 'var(--color-surface)',
+          borderTop: '1px solid var(--border-mid)',
+          boxShadow: '0 -6px 24px rgba(10,20,40,0.18)',
         }}
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}

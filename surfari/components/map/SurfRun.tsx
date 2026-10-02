@@ -10,10 +10,11 @@ import { createCrewLayer } from './CrewLayer';
 import { ChaseCamera, createShockwave, createWake } from './runFx';
 import { createChaserLayer } from './ChaserLayer';
 import { CHASER, createChaseWorld, stepChase, whip, whipCooldown, type ChaseWorld } from './chaserAI';
-import { isBlocked, resolveRider } from './collision';
+import { clearDistance, findOpenSpot, isBlocked, openHeading, resolveRider } from './collision';
 import { createBuildingSource } from './buildingSource';
 import { QualityGovernor, deviceQualityHints, initialQuality, type QualitySettings } from '@/lib/game/quality';
 import { setMapPixelRatioCap } from '@/lib/map/pixelRatio';
+import { THUMB, ThumbControls } from '@/lib/game/thumbControls';
 
 /* ── Movement physics (all rates are per-second; frame-rate independent) ── */
 const MAX_SPEED = 74;         // m/s on the board
@@ -22,6 +23,7 @@ const ACCEL_RATE = 2.1;       // throttle response
 const DECEL_RATE = 2.8;       // coast friction
 const BRAKE_RATE = 6.5;       // hard brake
 const TURN_RATE = 2.5;        // rad/s at full steer
+const START_DELAY_MS = 900;   // a beat to see where you are before the board rolls
 
 
 /* ── Run economy ── */
@@ -47,6 +49,12 @@ const BODA_RIDE_MS = 8000;    // boost duration after mounting a boda
 
 /* ── Multiplayer ── */
 const HEARTBEAT_MS = 1250;    // position + motion broadcast while riding
+
+/* ── Radar ── */
+const RADAR_PX = 84;
+const RADAR_RANGE_M = 450;
+
+const HINT_KEY = 'surfari-ride-hints-seen';
 
 const M_PER_DEG_LAT = 110574;
 
@@ -77,10 +85,11 @@ function normAngle(a: number) {
 }
 
 /**
- * SurfRun — the on-map endless runner. Momentum-based movement, a true
- * third-person chase camera (Mapbox free camera: behind + above the
- * character, looking down the street), coins, jumpable traffic — and
- * bodas you can MOUNT for an 8s speed boost instead of dodging.
+ * SurfRun — Cruise Mode. The ride owns the whole screen: the board rolls
+ * on its own, one thumb steers and does tricks (see thumbControls), and a
+ * street-level chase camera follows you through the city. Coins, jumpable
+ * traffic, bodas you can MOUNT for an 8s boost, and a rival crew on your
+ * tail. Pause brings the map and menus back.
  */
 export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void }) {
   const player = useGameStore((s) => s.player);
@@ -95,7 +104,15 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
 
   const posRef = useRef<{ lng: number; lat: number }>({ lng: 0, lat: 0 });
   const keysRef = useRef({ up: false, down: false, left: false, right: false });
-  const joyRef = useRef({ active: false, x: 0, y: 0 });
+  const thumbRef = useRef(new ThumbControls());
+  const pausedRef = useRef(false);
+  const [paused, setPaused] = useState(false);
+  const [showHints, setShowHints] = useState(() => {
+    try { return localStorage.getItem(HINT_KEY) !== '1'; } catch { return true; }
+  });
+  const stickRingRef = useRef<HTMLDivElement>(null);
+  const stickKnobRef = useRef<HTMLDivElement>(null);
+  const radarRef = useRef<HTMLCanvasElement>(null);
   const speedRef = useRef(0);          // m/s
   const headingRef = useRef(0);        // rad, clockwise from north
   const yawRateRef = useRef(0);        // rad/s, smoothed — sent so others can dead-reckon our arc
@@ -118,8 +135,19 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
   const runTideRef = useRef(0);
   const runIdRef = useRef<Promise<string | null> | null>(null);
   const lastZoneRef = useRef<{ id: string | null; at: number }>({ id: null, at: 0 });
-  const knobRef = useRef<HTMLDivElement>(null);
   const endedRef = useRef(false);
+
+  const setPause = useCallback((on: boolean) => {
+    pausedRef.current = on;
+    setPaused(on);
+    thumbRef.current.reset();
+    keysRef.current = { up: false, down: false, left: false, right: false };
+  }, []);
+
+  const dismissHints = useCallback(() => {
+    setShowHints(false);
+    try { localStorage.setItem(HINT_KEY, '1'); } catch { /* private mode */ }
+  }, []);
 
   // Snap the chase camera directly behind the runner — no smoothing.
   // The one-tap answer to "where am I?"
@@ -177,8 +205,6 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       });
     }
   }, [addNotification, bankRun, onExit, player]);
-  const endRunRef = useRef(endRun);
-  endRunRef.current = endRun;
 
   useEffect(() => {
     if (!player) return;
@@ -198,6 +224,10 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     map.scrollZoom.disable();
     map.touchZoomRotate.disable();
     map.doubleClickZoom.disable();
+    // The browse map's zoom cap would hold a free camera ~190 m up — a
+    // street-level chase cam needs to get right down among the buildings
+    const browseMaxZoom = map.getMaxZoom();
+    map.setMaxZoom(24);
 
     /* ── 3D character layer ── */
     const runner = createRunnerLayer('player-runner', player.avatar_color);
@@ -206,13 +236,6 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       lng: center.lng, lat: center.lat,
       heading: headingRef.current, speed: 0, lean: 0, jump: 0, mode: 'board', crashed: false,
     });
-
-    /* ── Handle tag above the character ── */
-    const el = document.createElement('div');
-    el.innerHTML = `<div class="surf-runner-tag">@${player.handle}</div>`;
-    const marker = new mapboxgl.Marker({ element: el, anchor: 'bottom', offset: [0, -96] })
-      .setLngLat([center.lng, center.lat])
-      .addTo(map);
 
     /* ── Live crew: other riders as 3D characters ── */
     const crew = createCrewLayer('crew-runners');
@@ -397,6 +420,27 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       return isBlocked(buildings.index, l.x, l.y);
     };
     world.blocked = (x, y) => isBlocked(buildings.index, x, y);
+    // Keep the street-level camera out of the buildings behind you
+    chase.setClearance((q, heading, maxBack, alt) => {
+      const l = toLocal(q);
+      return clearDistance(buildings.index, l.x, l.y, -Math.sin(heading), -Math.cos(heading), maxBack, 2, alt - 1);
+    });
+    // The ride starts wherever the map was looking — often inside a block.
+    // Once the buildings are known, drop the rider on open road facing down it.
+    let placed = false;
+    let prevHeading = headingRef.current;
+    const place = () => {
+      const here = toLocal(posRef.current);
+      const spot = findOpenSpot(buildings.index, here.x, here.y);
+      if (!spot) return;
+      const ll = toLngLat(spot.x, spot.y);
+      posRef.current = { lng: ll.lng, lat: ll.lat };
+      headingRef.current = openHeading(buildings.index, spot.x, spot.y, headingRef.current);
+      prevHeading = headingRef.current;
+      chase.snap(posRef.current, headingRef.current);
+      wake.clear();
+    };
+    const goAt = performance.now() + START_DELAY_MS;
     let lastScrapeMs = 0;
 
     /* ── Adaptive quality: phones start lower and the governor adjusts to real fps ── */
@@ -458,7 +502,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         case ' ': if (down) doJump(); e.preventDefault(); return;
         case 'r': case 'R': if (down) recenter(); return;
         case 'f': case 'F': case 'e': case 'E': if (down) whipRef.current(); return;
-        case 'Escape': if (down) endRunRef.current(); return;
+        case 'Escape': case 'p': case 'P': if (down) setPause(!pausedRef.current); return;
         default: return;
       }
       e.preventDefault();
@@ -467,6 +511,59 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     const onUp = (e: KeyboardEvent) => setKey(e, false);
     window.addEventListener('keydown', onDown);
     window.addEventListener('keyup', onUp);
+    // Backgrounding the app pauses the ride
+    const onVis = () => { if (document.hidden) setPause(true); };
+    document.addEventListener('visibilitychange', onVis);
+
+    /* ── Radar ── */
+    const drawRadar = () => {
+      const cv = radarRef.current;
+      const g = cv?.getContext('2d');
+      if (!cv || !g) return;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const size = RADAR_PX * dpr;
+      if (cv.width !== size) { cv.width = size; cv.height = size; }
+      const r = size / 2;
+      const k = (r - 4 * dpr) / RADAR_RANGE_M;
+      const me = toLocal(posRef.current);
+      const cosY = Math.cos(chase.yaw), sinY = Math.sin(chase.yaw);
+      // Local meters → radar pixels, rotated so the camera's view points up
+      const at = (x: number, y: number): [number, number] | null => {
+        const dx = x - me.x, dy = y - me.y;
+        const rx = dx * cosY - dy * sinY;
+        const ry = dx * sinY + dy * cosY;
+        const px = r + rx * k, py = r - ry * k;
+        return Math.hypot(px - r, py - r) <= r - 3 * dpr ? [px, py] : null;
+      };
+      g.clearRect(0, 0, size, size);
+      g.beginPath(); g.arc(r, r, r - dpr, 0, Math.PI * 2);
+      g.fillStyle = 'rgba(9,13,24,0.72)'; g.fill();
+      g.strokeStyle = 'rgba(0,194,255,0.35)'; g.lineWidth = dpr; g.stroke();
+      g.beginPath(); g.arc(r, r, r * 0.5, 0, Math.PI * 2);
+      g.strokeStyle = 'rgba(0,194,255,0.12)'; g.stroke();
+      const dot = (x: number, y: number, rad: number, color: string) => {
+        const q = at(x, y);
+        if (!q) return;
+        g.beginPath(); g.arc(q[0], q[1], rad * dpr, 0, Math.PI * 2);
+        g.fillStyle = color; g.fill();
+      };
+      for (const z of useGameStore.getState().nearby_zones) {
+        const l = toLocal(z);
+        const q = at(l.x, l.y);
+        if (!q) continue;
+        g.beginPath(); g.arc(q[0], q[1], Math.max(3 * dpr, (z.radius_meters ?? 200) * k), 0, Math.PI * 2);
+        g.strokeStyle = 'rgba(0,194,255,0.7)'; g.lineWidth = 1.5 * dpr; g.stroke();
+      }
+      for (const c of coinsRef.current) { const l = toLocal(c); dot(l.x, l.y, 1.6, '#FFD84D'); }
+      for (const rd of crew.getPositions()) { const l = toLocal(rd); dot(l.x, l.y, 2.4, '#F0F6FF'); }
+      for (const c of world.chasers) if (c.state !== 'ko') dot(c.x, c.y, 3, '#FF4757');
+      // You: an arrow pointing the way you ride
+      const rel = headingRef.current - chase.yaw;
+      g.save(); g.translate(r, r); g.rotate(rel);
+      g.beginPath(); g.moveTo(0, -6 * dpr); g.lineTo(4.5 * dpr, 5 * dpr); g.lineTo(0, 2.5 * dpr); g.lineTo(-4.5 * dpr, 5 * dpr); g.closePath();
+      g.fillStyle = player.avatar_color; g.fill();
+      g.restore();
+    };
 
     /* ── Game loop ── */
     let raf: number;
@@ -474,12 +571,19 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     let lastObSpawn = 0;
     let frame = 0;
     let prevJumpH = 0;
-    let prevHeading = headingRef.current;
 
     const tick = (ts: number) => {
       const dt = Math.min((ts - lastTs) / 1000, 0.05);
       lastTs = ts;
+      if (pausedRef.current) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
       frame++;
+      if (!placed && buildings.index) {
+        placed = true;
+        place();
+      }
 
       // Jump arc
       let jumpH = 0;
@@ -489,34 +593,22 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         else jumpH = 4 * JUMP_H_M * jt * (1 - jt);
       }
 
-      /* ── Input → steering + throttle (driving model, not strafing) ── */
+      /* ── Input: the board cruises by itself; thumb or keys steer, push and brake ── */
       const k = keysRef.current;
-      let steer = (k.right ? 1 : 0) - (k.left ? 1 : 0);
-      let throttle = k.up ? 1 : 0;
-      let brake = k.down;
+      const thumb = thumbRef.current.input();
+      const keySteer = (k.right ? 1 : 0) - (k.left ? 1 : 0);
+      const steer = thumb.steering ? thumb.steer : keySteer;
+      let throttle = k.up ? 1 : thumb.throttle;
+      let brake = k.down || thumb.brake;
 
       const onBoda = ts < bodaUntilRef.current;
       const maxSpd = MAX_SPEED * (onBoda ? BODA_MULT : 1);
       const speed01 = Math.min(speedRef.current / MAX_SPEED, 1.2);
 
-      if (joyRef.current.active) {
-        const jx = joyRef.current.x;
-        const jy = joyRef.current.y;
-        const m = Math.min(Math.hypot(jx, jy), 1);
-        if (m > 0.12) {
-          const desired = Math.atan2(jx, -jy) + chase.yaw;
-          const dh = normAngle(desired - headingRef.current);
-          const maxTurn = TURN_RATE * dt;
-          headingRef.current += Math.max(-maxTurn, Math.min(maxTurn, dh));
-          steer = Math.max(-1, Math.min(1, dh * 1.4));
-          throttle = m;
-          brake = false;
-        }
-      } else if (steer !== 0) {
-        // Steering authority grows with speed, but you can always pivot a bit
-        headingRef.current += steer * TURN_RATE * dt * (0.45 + 0.55 * Math.min(speed01, 1));
-      }
+      // Steering authority grows with speed, but you can always pivot a bit
+      headingRef.current += steer * TURN_RATE * dt * (0.5 + 0.5 * Math.min(speed01, 1));
 
+      if (ts < goAt) throttle = 0;
       if (ts < stunUntilRef.current) { throttle = 0; brake = false; }
 
       /* ── Momentum ── */
@@ -547,6 +639,9 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
             headingRef.current = r.heading;
             speedRef.current = r.speed;
             if (r.crash && ts >= stunUntilRef.current) {
+              // The board rides itself, so bounce off pointing down open road —
+              // otherwise auto-cruise would grind you straight back into the wall
+              headingRef.current = openHeading(buildings.index, r.x, r.y, headingRef.current, 160, 16);
               takeHit(ts, 0.8);
               pop('WALL!', '#FF4757');
             } else if (r.scrape && ts - lastScrapeMs > 250) {
@@ -556,7 +651,6 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
             }
           }
         }
-        marker.setLngLat([p.lng, p.lat]);
 
         // Coin pickup
         const before = coinsRef.current.length;
@@ -612,7 +706,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
               const now = Date.now();
               if (lastZoneRef.current.id !== z.id || now - lastZoneRef.current.at > 6000) {
                 lastZoneRef.current = { id: z.id, at: now };
-                state.selectZone(z);
+                pop(`📍 ${z.name.toUpperCase()}`, '#00C2FF');
                 sfx.whoosh();
               }
               break;
@@ -739,6 +833,9 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         }
       }
 
+      // Radar: what's around you, rotated so up is where the camera looks
+      if (frame % 4 === 0) drawRadar();
+
       // HUD readouts (throttled to avoid re-render churn)
       if (frame % 8 === 0) {
         setSpeedKmh(Math.round(speedRef.current * 3.6));
@@ -767,7 +864,8 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       clearInterval(hbInterval);
       window.removeEventListener('keydown', onDown);
       window.removeEventListener('keyup', onUp);
-      marker.remove();
+      document.removeEventListener('visibilitychange', onVis);
+      chase.setClearance(null);
       remoteTags.forEach((t) => t.remove());
       remoteTags.clear();
       obstaclesRef.current.forEach((o) => o.marker.remove());
@@ -789,6 +887,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       map.scrollZoom.enable();
       map.touchZoomRotate.enable();
       map.doubleClickZoom.enable();
+      map.setMaxZoom(browseMaxZoom);
       // Hand the camera back to the normal map view
       map.easeTo({
         center: [posRef.current.lng, posRef.current.lat],
@@ -804,28 +903,40 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, player?.id]);
 
-  /* ── Joystick pointer handling ── */
-  const joyStart = (e: React.PointerEvent) => {
+  /* ── Touch: one thumb steers anywhere on screen, tap = whip, flick up = jump ── */
+  const drawStick = () => {
+    const st = thumbRef.current.stick();
+    const ring = stickRingRef.current;
+    const knob = stickKnobRef.current;
+    if (!ring || !knob) return;
+    if (!st) { ring.style.opacity = '0'; return; }
+    const dx = Math.max(-THUMB.STEER_PX, Math.min(THUMB.STEER_PX, st.dx));
+    const dy = Math.max(-THUMB.PUSH_PX, Math.min(THUMB.PUSH_PX, st.dy)) * 0.5;
+    ring.style.opacity = '1';
+    ring.style.transform = `translate(${st.x0 - 48}px, ${st.y0 - 48}px)`;
+    knob.style.transform = `translate(${dx * 0.55}px, ${dy * 0.55}px)`;
+  };
+  const touchDown = (e: React.PointerEvent) => {
+    if (pausedRef.current) return;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    joyRef.current.active = true;
-    joyMove(e);
+    thumbRef.current.down(e.pointerId, e.clientX, e.clientY, e.timeStamp);
+    if (showHints) dismissHints();
+    drawStick();
   };
-  const joyMove = (e: React.PointerEvent) => {
-    if (!joyRef.current.active) return;
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    let x = (e.clientX - cx) / (rect.width / 2);
-    let y = (e.clientY - cy) / (rect.height / 2);
-    const m = Math.hypot(x, y);
-    if (m > 1) { x /= m; y /= m; }
-    joyRef.current.x = x;
-    joyRef.current.y = y;
-    if (knobRef.current) knobRef.current.style.transform = `translate(${x * 34}px, ${y * 34}px)`;
+  const touchMove = (e: React.PointerEvent) => {
+    if (thumbRef.current.move(e.pointerId, e.clientX, e.clientY, e.timeStamp) === 'jump') {
+      doJump();
+      buzz(12);
+    }
+    drawStick();
   };
-  const joyEnd = () => {
-    joyRef.current = { active: false, x: 0, y: 0 };
-    if (knobRef.current) knobRef.current.style.transform = '';
+  const touchUp = (e: React.PointerEvent) => {
+    if (thumbRef.current.up(e.pointerId, e.timeStamp) === 'whip') whipRef.current();
+    drawStick();
+  };
+  const touchCancel = (e: React.PointerEvent) => {
+    thumbRef.current.cancel(e.pointerId);
+    drawStick();
   };
 
   if (!player) return null;
@@ -914,80 +1025,83 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
           style={{ background: 'radial-gradient(circle, transparent 55%, rgba(0,224,150,0.16) 100%)' }} />
       )}
 
-      {/* Run HUD chip */}
-      <div className="absolute left-4 z-30 flex items-center gap-2.5 px-3 py-2"
+      {/* Touch surface — the whole screen is the controller (under the HUD) */}
+      <div
+        className="absolute inset-0 z-20 touch-none select-none"
+        style={{ WebkitUserSelect: 'none', WebkitTouchCallout: 'none' }}
+        onPointerDown={touchDown}
+        onPointerMove={touchMove}
+        onPointerUp={touchUp}
+        onPointerCancel={touchCancel}
+        aria-label="Ride controls: drag to steer, tap to whip, flick up to jump"
+      />
+
+      {/* Floating stick: appears under your thumb while you steer */}
+      <div ref={stickRingRef} className="absolute left-0 top-0 z-[21] pointer-events-none"
         style={{
-          top: 'calc(var(--safe-top, 0px) + 16px)',
-          background: 'rgba(9,13,24,0.85)',
-          border: '1px solid rgba(255,184,0,0.4)',
-          backdropFilter: 'blur(10px)',
+          width: 96, height: 96, borderRadius: '50%', opacity: 0, transition: 'opacity 0.12s',
+          border: '1.5px solid rgba(0,194,255,0.45)', background: 'rgba(9,13,24,0.25)',
         }}>
-        <span style={{ fontSize: '16px', lineHeight: 1 }}>{bodaLeft > 0 ? '🛵' : '🏄'}</span>
-        <span style={{ fontFamily: 'var(--font-arcade)', fontSize: '17px', letterSpacing: '0.1em', color: '#FFD84D', lineHeight: 1 }}>
-          +{runTide} T
-        </span>
-        <span style={{ fontFamily: 'var(--font-arcade)', fontSize: '17px', letterSpacing: '0.1em', color: '#00C2FF', lineHeight: 1 }}>
-          {distKm.toFixed(1)} KM
-        </span>
-        <span style={{ fontFamily: 'var(--font-arcade)', fontSize: '17px', letterSpacing: '0.08em', color: bodaLeft > 0 ? '#00E096' : '#8BA3BE', lineHeight: 1, minWidth: 74 }}>
-          {speedKmh} KM/H
-        </span>
-        {bodaLeft > 0 && (
-          <span style={{ fontFamily: 'var(--font-arcade)', fontSize: '15px', letterSpacing: '0.08em', color: '#00E096', lineHeight: 1 }}>
-            BOOST {bodaLeft.toFixed(0)}s
-          </span>
-        )}
-        <button onClick={recenter} aria-label="Recenter camera on your runner"
+        <div ref={stickKnobRef} className="absolute"
           style={{
-            fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.15em',
-            color: '#00C2FF', border: '1px solid rgba(0,194,255,0.35)',
-            padding: '3px 7px', marginLeft: 4, background: 'none',
-          }}>
-          ⌖ FIND ME
-        </button>
-        <button onClick={endRun} aria-label="Exit surf run"
-          style={{
-            fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.15em',
-            color: '#8BA3BE', border: '1px solid rgba(240,246,255,0.18)',
-            padding: '3px 7px', background: 'none',
-          }}>
-          END RUN
-        </button>
+            left: 28, top: 28, width: 40, height: 40, borderRadius: '50%',
+            background: 'linear-gradient(140deg, rgba(0,194,255,0.9), rgba(124,92,252,0.9))',
+            boxShadow: '0 0 14px rgba(0,194,255,0.55)',
+          }} />
       </div>
 
-      {/* Desktop key hint */}
-      <p className="hidden lg:block absolute bottom-5 left-1/2 -translate-x-1/2 z-30 pointer-events-none"
-        style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.25em', color: 'rgba(240,246,255,0.55)', textShadow: '0 1px 6px rgba(0,0,0,0.8)' }}>
-        ↑ THROTTLE · ← → STEER · ↓ BRAKE · SPACE JUMP · R FIND ME · GRAB A 🛵 FOR BOOST · ESC TO END
-      </p>
-
-      {/* Mobile joystick */}
-      <div
-        className="lg:hidden absolute z-30 touch-none select-none"
-        style={{
-          left: 20,
-          bottom: 'calc(var(--screen-pad-bottom, 24px) + 16px)',
-          width: 110, height: 110, borderRadius: '50%',
-          background: 'rgba(9,13,24,0.5)',
-          border: '1.5px solid rgba(0,194,255,0.35)',
-          backdropFilter: 'blur(6px)',
-        }}
-        onPointerDown={joyStart}
-        onPointerMove={joyMove}
-        onPointerUp={joyEnd}
-        onPointerCancel={joyEnd}
-      >
-        <div
-          ref={knobRef}
-          className="absolute"
+      {/* Slim top bar: pause · run stats · whip charge — radar on the right */}
+      <div className="absolute left-3 right-3 z-30 flex items-start gap-2 pointer-events-none"
+        style={{ top: 'calc(var(--safe-top, 0px) + 8px)' }}>
+        <button onClick={() => setPause(true)} aria-label="Pause ride"
+          className="pointer-events-auto flex items-center justify-center shrink-0"
           style={{
-            left: '50%', top: '50%', marginLeft: -22, marginTop: -22,
-            width: 44, height: 44, borderRadius: '50%',
-            background: 'linear-gradient(140deg, #00C2FF, #7C5CFC)',
-            boxShadow: '0 0 16px rgba(0,194,255,0.55)',
-            transition: 'transform 0.05s linear',
-          }}
-        />
+            width: 42, height: 42, borderRadius: 12,
+            background: 'rgba(9,13,24,0.72)', border: '1px solid rgba(240,246,255,0.18)',
+            backdropFilter: 'blur(8px)',
+          }}>
+          <span style={{ display: 'flex', gap: 4 }}>
+            <span style={{ width: 4, height: 15, borderRadius: 2, background: '#F0F6FF' }} />
+            <span style={{ width: 4, height: 15, borderRadius: 2, background: '#F0F6FF' }} />
+          </span>
+        </button>
+
+        <div className="flex flex-col gap-1 min-w-0">
+          <div className="flex items-center gap-2.5 px-3"
+            style={{
+              height: 42, borderRadius: 12,
+              background: 'rgba(9,13,24,0.72)', border: '1px solid rgba(255,184,0,0.3)',
+              backdropFilter: 'blur(8px)',
+            }}>
+            <span style={{ fontFamily: 'var(--font-arcade)', fontSize: '19px', letterSpacing: '0.06em', color: '#FFD84D', lineHeight: 1, whiteSpace: 'nowrap' }}>
+              +{runTide} T
+            </span>
+            <span style={{ width: 1, height: 18, background: 'rgba(240,246,255,0.15)' }} />
+            <span style={{ fontFamily: 'var(--font-arcade)', fontSize: '15px', letterSpacing: '0.06em', color: bodaLeft > 0 ? '#00E096' : '#F0F6FF', lineHeight: 1, whiteSpace: 'nowrap', minWidth: 58 }}>
+              {speedKmh}<span style={{ fontSize: '10px', color: '#8BA3BE', marginLeft: 3 }}>KM/H</span>
+            </span>
+            <span style={{ fontFamily: 'var(--font-arcade)', fontSize: '15px', letterSpacing: '0.06em', color: '#00C2FF', lineHeight: 1, whiteSpace: 'nowrap' }}>
+              {distKm.toFixed(1)}<span style={{ fontSize: '10px', color: '#8BA3BE', marginLeft: 3 }}>KM</span>
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Whip charge: fills as the cooldown recovers */}
+            <div ref={whipBtnRef} className="rounded-full p-[2px]" style={{ background: 'rgba(255,71,87,0.85)' }}>
+              <div className="rounded-full px-2 py-[3px]" style={{ background: 'rgba(9,13,24,0.88)' }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', fontWeight: 700, letterSpacing: '0.14em', color: '#FF4757' }}>WHIP</span>
+              </div>
+            </div>
+            {bodaLeft > 0 && (
+              <span className="px-2 py-[3px] rounded-full"
+                style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', fontWeight: 700, letterSpacing: '0.14em', color: '#00E096', background: 'rgba(9,13,24,0.8)', border: '1px solid rgba(0,224,150,0.5)' }}>
+                🛵 BOOST {bodaLeft.toFixed(0)}s
+              </span>
+            )}
+          </div>
+        </div>
+
+        <canvas ref={radarRef} className="ml-auto shrink-0" aria-hidden
+          style={{ width: RADAR_PX, height: RADAR_PX, borderRadius: '50%' }} />
       </div>
 
       {/* Rival threat arrows — positioned and rotated from the game loop */}
@@ -996,40 +1110,79 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       ))}
       <div ref={popRef} className="surf-pop" />
 
-      {/* Tail-whip: F / E on keyboard; ring fills as the cooldown recovers */}
-      <div ref={whipBtnRef}
-        className="absolute z-30 rounded-full p-[3px]"
-        style={{ right: 106, bottom: 'calc(var(--screen-pad-bottom, 24px) + 30px)', background: 'rgba(255,71,87,0.85)' }}>
-        <button
-          className="flex flex-col items-center justify-center touch-none select-none rounded-full"
-          style={{ width: 58, height: 58, background: 'rgba(9,13,24,0.88)', backdropFilter: 'blur(6px)' }}
-          onPointerDown={(e) => { e.preventDefault(); whipRef.current(); }}
-          aria-label="Tail-whip the rider behind you"
-        >
-          <span style={{ fontFamily: 'var(--font-arcade)', fontSize: '14px', letterSpacing: '0.06em', color: '#FF4757', lineHeight: 1 }}>WHIP</span>
-          <span className="hidden lg:block" style={{ fontFamily: 'var(--font-mono)', fontSize: '8px', color: '#8BA3BE', marginTop: 2 }}>F</span>
-        </button>
-      </div>
+      {/* First-ride hints */}
+      <AnimatePresence>
+        {showHints && !paused && (
+          <motion.div
+            className="absolute inset-x-0 mx-auto z-[25] pointer-events-none flex flex-col items-center gap-2"
+            style={{ bottom: 'calc(var(--safe-bottom, 0px) + 40px)', width: 'min(340px, calc(100% - 32px))' }}
+            initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 12 }}
+          >
+            <div className="lg:hidden grid grid-cols-2 gap-x-4 gap-y-1.5 px-4 py-3 w-full"
+              style={{ background: 'rgba(9,13,24,0.78)', border: '1px solid rgba(0,194,255,0.3)', borderRadius: 14, backdropFilter: 'blur(8px)' }}>
+              {[
+                ['👆 DRAG', 'steer'],
+                ['⬇ DRAG DOWN', 'brake'],
+                ['👉 TAP', 'tail-whip'],
+                ['⬆ FLICK UP', 'jump'],
+              ].map(([k, v]) => (
+                <div key={k} className="flex items-baseline gap-2">
+                  <span style={{ fontFamily: 'var(--font-arcade)', fontSize: '13px', letterSpacing: '0.06em', color: '#F0F6FF', whiteSpace: 'nowrap' }}>{k}</span>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: '#8BA3BE' }}>{v}</span>
+                </div>
+              ))}
+            </div>
+            <p className="hidden lg:block px-4 py-2"
+              style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.2em', color: '#F0F6FF', background: 'rgba(9,13,24,0.78)', borderRadius: 10 }}>
+              ← → STEER · ↑ PUSH · ↓ BRAKE · SPACE JUMP · F WHIP · R FIND ME · ESC PAUSE
+            </p>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.2em', color: 'rgba(240,246,255,0.7)', textShadow: '0 1px 6px rgba(0,0,0,0.8)' }}>
+              THE BOARD RIDES ITSELF — JUST STEER
+            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {/* Mobile jump button */}
-      <button
-        className="lg:hidden absolute z-30 flex items-center justify-center touch-none select-none"
-        style={{
-          right: 20,
-          bottom: 'calc(var(--screen-pad-bottom, 24px) + 24px)',
-          width: 74, height: 74, borderRadius: '50%',
-          background: 'rgba(9,13,24,0.6)',
-          border: '2px solid rgba(255,184,0,0.55)',
-          backdropFilter: 'blur(6px)',
-          boxShadow: '0 0 20px rgba(255,184,0,0.25)',
-        }}
-        onPointerDown={(e) => { e.preventDefault(); doJump(); }}
-        aria-label="Jump"
-      >
-        <span style={{ fontFamily: 'var(--font-arcade)', fontSize: '17px', letterSpacing: '0.08em', color: '#FFD84D', lineHeight: 1 }}>
-          JUMP
-        </span>
-      </button>
+      {/* Pause: the only way out of the ride, and back to the map and menus */}
+      <AnimatePresence>
+        {paused && (
+          <motion.div
+            className="absolute inset-0 z-40 flex items-center justify-center px-6"
+            style={{ background: 'rgba(5,8,16,0.62)', backdropFilter: 'blur(6px)' }}
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          >
+            <motion.div
+              className="w-full flex flex-col gap-3 p-5"
+              style={{ maxWidth: 340, background: 'rgba(9,13,24,0.94)', border: '1px solid rgba(0,194,255,0.3)', borderRadius: 18 }}
+              initial={{ scale: 0.94, y: 10 }} animate={{ scale: 1, y: 0 }}
+            >
+              <p style={{ fontFamily: 'var(--font-arcade)', fontSize: '26px', letterSpacing: '0.14em', color: '#F0F6FF', textAlign: 'center', lineHeight: 1 }}>PAUSED</p>
+              <div className="flex justify-center gap-5 pb-1">
+                <span style={{ fontFamily: 'var(--font-arcade)', fontSize: '17px', color: '#FFD84D' }}>+{runTide} T</span>
+                <span style={{ fontFamily: 'var(--font-arcade)', fontSize: '17px', color: '#00C2FF' }}>{distKm.toFixed(1)} KM</span>
+              </div>
+              <button onClick={() => setPause(false)} aria-label="Resume ride"
+                className="w-full py-3.5"
+                style={{ borderRadius: 12, background: 'linear-gradient(135deg, #00C2FF, #7C5CFC)', fontFamily: 'var(--font-arcade)', fontSize: '19px', letterSpacing: '0.14em', color: '#fff' }}>
+                RESUME
+              </button>
+              <button onClick={() => { recenter(); setPause(false); }} aria-label="Recenter camera and resume"
+                className="w-full py-3"
+                style={{ borderRadius: 12, border: '1px solid rgba(0,194,255,0.35)', fontFamily: 'var(--font-arcade)', fontSize: '15px', letterSpacing: '0.14em', color: '#00C2FF' }}>
+                ⌖ FIND ME
+              </button>
+              <button onClick={endRun} aria-label="End ride and open the map"
+                className="w-full py-3"
+                style={{ borderRadius: 12, border: '1px solid rgba(240,246,255,0.16)', fontFamily: 'var(--font-arcade)', fontSize: '15px', letterSpacing: '0.14em', color: '#8BA3BE' }}>
+                END RIDE · MAP & MENUS
+              </button>
+              <p style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: '#5C6F86', textAlign: 'center' }}>
+                Ending the ride banks your Tide.
+              </p>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </>
   );
 }
