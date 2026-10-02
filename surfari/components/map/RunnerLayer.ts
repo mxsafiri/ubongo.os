@@ -2,7 +2,7 @@
 
 import * as THREE from 'three';
 import mapboxgl from 'mapbox-gl';
-import { buildCharacter, animateCharacter, addCharacterLights, disposeScene, type CharParts, type RideMode } from './runnerModel';
+import { buildCharacter, animateCharacter, addCharacterLights, disposeCharacter, disposeScene, renderCharacter, type CharParts, type RideMode } from './runnerModel';
 
 // Character proportions are in "model units" (~1.8 units tall);
 // UNIT_METERS scales one unit to city meters. ~13m tall total — big enough
@@ -17,6 +17,8 @@ export interface RunnerState {
   lean: number;    // -1..1 (left/right input, for roll)
   jump: number;    // meters above ground
   mode: RideMode;  // 'board' | 'boda'
+  crashed: boolean; // inside the post-crash stun window
+  attacking?: boolean; // tail-whip in progress
 }
 
 export interface RunnerLayer extends mapboxgl.CustomLayerInterface {
@@ -28,13 +30,12 @@ export interface RunnerLayer extends mapboxgl.CustomLayerInterface {
  * inside the Mapbox WebGL scene, depth-tested against 3D buildings.
  */
 export function createRunnerLayer(id: string, accentColor: string): RunnerLayer {
-  const state: RunnerState = { lng: 0, lat: 0, heading: 0, speed: 0, lean: 0, jump: 0, mode: 'board' };
+  const state: RunnerState = { lng: 0, lat: 0, heading: 0, speed: 0, lean: 0, jump: 0, mode: 'board', crashed: false };
 
   let renderer: THREE.WebGLRenderer | null = null;
   let scene: THREE.Scene | null = null;
   let camera: THREE.Camera | null = null;
   let parts: CharParts | null = null;
-  let smoothHeading = 0;
 
   const layer: RunnerLayer = {
     id,
@@ -61,6 +62,7 @@ export function createRunnerLayer(id: string, accentColor: string): RunnerLayer 
     },
 
     onRemove() {
+      if (parts) disposeCharacter(parts);
       if (scene) disposeScene(scene);
       renderer?.dispose();
       renderer = null;
@@ -74,14 +76,16 @@ export function createRunnerLayer(id: string, accentColor: string): RunnerLayer 
 
       const t = performance.now() / 1000;
 
-      // Smooth the heading turn (shortest arc)
-      let dh = state.heading - smoothHeading;
-      while (dh > Math.PI) dh -= Math.PI * 2;
-      while (dh < -Math.PI) dh += Math.PI * 2;
-      smoothHeading += dh * 0.18;
-
-      parts.group.rotation.y = -smoothHeading;
-      animateCharacter(parts, t, state.speed, state.lean, state.jump, UNIT_METERS, state.mode);
+      animateCharacter(parts, {
+        t,
+        heading: state.heading,
+        speed: state.speed,
+        jump: state.jump,
+        unitMeters: UNIT_METERS,
+        mode: state.mode,
+        crashed: state.crashed,
+        attacking: state.attacking,
+      });
 
       const merc = mapboxgl.MercatorCoordinate.fromLngLat([state.lng, state.lat], 0);
       const scale = merc.meterInMercatorCoordinateUnits() * UNIT_METERS;
@@ -93,8 +97,7 @@ export function createRunnerLayer(id: string, accentColor: string): RunnerLayer 
         .multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2));
 
       (camera as THREE.Camera & { projectionMatrix: THREE.Matrix4 }).projectionMatrix = m.multiply(l);
-      renderer.resetState();
-      renderer.render(scene, camera);
+      renderCharacter(renderer, scene, camera, parts);
     },
   };
 

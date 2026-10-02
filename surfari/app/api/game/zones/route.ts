@@ -3,9 +3,10 @@ import { randomBytes } from 'crypto';
 import { sql } from '@/lib/db/client';
 import { ensureSchema } from '@/lib/db/schema';
 import { DAR_ZONES } from '@/lib/game/zones';
+import { publicPlayer } from '@/lib/game/economy';
+import { MAX_TURFS_PER_PLAYER, PLANT_COST } from '@/lib/game/balance';
 import type { Zone } from '@/types';
 
-const MAX_TURFS_PER_PLAYER = 5;
 // Dar es Salaam play area — matches the map maxBounds
 const BOUNDS = { minLng: 39.0, maxLng: 39.6, minLat: -7.1, maxLat: -6.5 };
 
@@ -74,43 +75,71 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Outside the Dar es Salaam play area' }, { status: 400 });
     }
 
-    const [player] = await sql`SELECT id, handle, avatar_color, zones_owned FROM players WHERE id = ${player_id}`;
-    if (!player) return NextResponse.json({ error: 'Player not found' }, { status: 404 });
-
-    const [{ count: turfCount }] = await sql`
-      SELECT COUNT(*)::int AS count FROM zones
-      WHERE owner_id = ${player_id} AND id LIKE 'turf-%'
-    `;
-    if (turfCount >= MAX_TURFS_PER_PLAYER) {
-      return NextResponse.json({ error: `Max ${MAX_TURFS_PER_PLAYER} turfs — reinforce what you hold` }, { status: 409 });
-    }
-
     const id = `turf-${randomBytes(6).toString('hex')}`;
-    const name = turfCount === 0 ? `${player.handle}'s Turf` : `${player.handle}'s Turf ${turfCount + 1}`;
 
-    const [zone] = await sql`
-      INSERT INTO zones (id, name, district, tier, type, state,
-        owner_id, owner_handle, owner_color,
-        lat, lng, radius_meters, claim_strength,
-        contested_threshold, daily_yield, upkeep_cost)
-      VALUES (
-        ${id}, ${name}, 'Player Turf', 'savanna', 'street_market', 'claimed',
-        ${player.id}, ${player.handle}, ${player.avatar_color},
-        ${lat}, ${lng}, 150, 30,
-        5, 400, 40
+    // One statement: charge PLANT_COST, plant the turf, write the ledger.
+    // The charge re-checks the balance on the locked player row, so it can
+    // never overdraw and never lands without the turf. (The turf cap reads
+    // the statement snapshot, so two simultaneous plants could both pass it;
+    // each needs a won mini-game first, so that's tolerated.)
+    const [result] = await sql`
+      WITH cnt AS (
+        SELECT COUNT(*)::int AS n FROM zones WHERE owner_id = ${player_id} AND id LIKE 'turf-%'
+      ),
+      charged AS (
+        UPDATE players
+        SET tide_tokens = players.tide_tokens - ${PLANT_COST},
+            zones_owned = players.zones_owned + 1,
+            last_active = NOW()
+        FROM cnt
+        WHERE players.id = ${player_id}
+          AND players.tide_tokens >= ${PLANT_COST}
+          AND cnt.n < ${MAX_TURFS_PER_PLAYER}
+        RETURNING players.*
+      ),
+      planted AS (
+        INSERT INTO zones (id, name, district, tier, type, state,
+          owner_id, owner_handle, owner_color,
+          lat, lng, radius_meters, claim_strength,
+          contested_threshold, daily_yield, upkeep_cost)
+        SELECT ${id},
+          c.handle || '''s Turf' || CASE WHEN cnt.n = 0 THEN '' ELSE ' ' || (cnt.n + 1) END,
+          'Player Turf', 'savanna', 'street_market', 'claimed',
+          c.id, c.handle, c.avatar_color,
+          ${lat}, ${lng}, 150, 30,
+          5, 400, 40
+        FROM charged c, cnt
+        RETURNING id, name, district, tier, type, state,
+          owner_id, owner_handle, owner_color,
+          lat::float AS lat, lng::float AS lng, radius_meters,
+          claim_strength, trace_count, contested_threshold,
+          daily_yield, upkeep_cost, created_at
+      ),
+      ledger AS (
+        INSERT INTO transactions (player_id, type, amount, description, zone_id)
+        SELECT c.id, 'plant', ${-PLANT_COST}, 'Planted turf', ${id} FROM charged c
       )
-      RETURNING id, name, district, tier, type, state,
-        owner_id, owner_handle, owner_color,
-        lat::float, lng::float, radius_meters,
-        claim_strength, trace_count, contested_threshold,
-        daily_yield, upkeep_cost, created_at
+      SELECT
+        (SELECT row_to_json(planted) FROM planted) AS zone,
+        (SELECT row_to_json(charged) FROM charged) AS player,
+        (SELECT n FROM cnt) AS turfs,
+        (SELECT tide_tokens FROM players WHERE id = ${player_id}) AS balance
     `;
 
-    const [updatedPlayer] = await sql`
-      UPDATE players SET zones_owned = zones_owned + 1, last_active = NOW()
-      WHERE id = ${player_id}
-      RETURNING *
-    `;
+    if (!result?.zone || !result.player) {
+      if (result?.balance === null || result?.balance === undefined) {
+        return NextResponse.json({ error: 'Player not found' }, { status: 404 });
+      }
+      if (result.turfs >= MAX_TURFS_PER_PLAYER) {
+        return NextResponse.json({ error: `Max ${MAX_TURFS_PER_PLAYER} turfs — reinforce what you hold` }, { status: 409 });
+      }
+      return NextResponse.json(
+        { error: `Planting costs ${PLANT_COST.toLocaleString()} Tide — you have ${Number(result.balance).toLocaleString()}` },
+        { status: 402 },
+      );
+    }
+    const zone = result.zone;
+    const updatedPlayer = result.player;
 
     const zoneOut = {
       ...zone,
@@ -121,7 +150,7 @@ export async function POST(req: NextRequest) {
       infrastructure: [],
     } as unknown as Zone;
 
-    return NextResponse.json({ zone: zoneOut, player: updatedPlayer });
+    return NextResponse.json({ zone: zoneOut, player: publicPlayer(updatedPlayer) });
   } catch (err) {
     console.error('POST /api/game/zones', err);
     return NextResponse.json({ error: 'Failed to plant turf' }, { status: 500 });

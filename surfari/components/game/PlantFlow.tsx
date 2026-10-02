@@ -5,6 +5,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Flag, X } from 'lucide-react';
 import { useGameStore, selectPlantSite } from '@/store/game';
 import { GameArena } from './GameArena';
+import { PLANT_COST } from '@/lib/game/balance';
+import { formatTokens } from '@/lib/utils';
 
 // PlantFlow — build-your-own-turf. The player taps bare ground on the map,
 // confirms, wins a game, and a new zone with their name on it joins the city.
@@ -17,6 +19,9 @@ export function PlantFlow() {
   const setActiveTab = useGameStore((s) => s.setActiveTab);
 
   const [gameOpen, setGameOpen] = useState(false);
+  // Checked again on the server; here it just saves playing a game you can't cash in
+  const balance = player?.tide_tokens ?? 0;
+  const canAfford = balance >= PLANT_COST;
 
   const cancel = useCallback(() => {
     setGameOpen(false);
@@ -25,8 +30,9 @@ export function PlantFlow() {
 
   const handleWin = useCallback(async () => {
     setGameOpen(false);
-    const zone = await plantTurf();
-    if (zone && player) {
+    const result = await plantTurf();
+    if ('zone' in result && player) {
+      const { zone } = result;
       addNotification({
         type: 'zone_claimed',
         title: `🚩 ${zone.name} is on the map!`,
@@ -49,7 +55,7 @@ export function PlantFlow() {
       addNotification({
         type: 'system',
         title: 'Turf not planted',
-        message: 'Could not build here — you may be at the 5-turf cap.',
+        message: 'error' in result ? result.error : 'Could not plant here.',
       });
       setPlantSite(null);
     }
@@ -105,12 +111,16 @@ export function PlantFlow() {
                 <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: '#8BA3BE', letterSpacing: '0.04em', marginBottom: 14, lineHeight: 1.5 }}>
                   Win the game and this block becomes YOUR turf.
                   <span style={{ color: '#F59E0B' }}> 400 T/DAY</span> · challengeable by rivals
+                  <br />
+                  Costs <span style={{ color: canAfford ? '#FFD84D' : '#FF4757' }}>{formatTokens(PLANT_COST)} T</span>
+                  {!canAfford && <span style={{ color: '#FF4757' }}> — you have {formatTokens(balance)}</span>}
                 </p>
 
                 <div className="flex gap-2">
                   <motion.button
                     className="flex-1 py-2.5"
                     style={{
+                      opacity: canAfford ? 1 : 0.45,
                       background: 'linear-gradient(135deg, #00E096, #0099C2)',
                       fontFamily: 'var(--font-arcade)',
                       fontSize: '19px',
@@ -118,10 +128,11 @@ export function PlantFlow() {
                       color: '#04110C',
                       lineHeight: 1,
                     }}
-                    whileTap={{ scale: 0.96 }}
-                    onClick={() => setGameOpen(true)}
+                    whileTap={canAfford ? { scale: 0.96 } : undefined}
+                    onClick={() => canAfford && setGameOpen(true)}
+                    disabled={!canAfford}
                   >
-                    LET&apos;S GO
+                    {canAfford ? <>LET&apos;S GO</> : 'NEED MORE TIDE'}
                   </motion.button>
                   <button
                     className="px-4 py-2.5"

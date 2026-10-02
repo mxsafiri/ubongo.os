@@ -1,17 +1,17 @@
 {
-  "name": "Surfari",
+  "name": "Surfari — Own the City",
   "short_name": "Surfari",
   "description": "Own the city. Ride every zone.",
-  "start_url": "/",
+  "start_url": "/surfari",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#060810",
   "theme_color": "#060810",
   "orientation": "portrait",
   "icons": [
-    {
-      "src": "/favicon.ico",
-      "sizes": "any",
-      "type": "image/x-icon"
-    }
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
   ]
 }

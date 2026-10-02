@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/lib/db/client';
+import { ensureSchema } from '@/lib/db/schema';
+import { publicPlayer, settleYield } from '@/lib/game/economy';
 import type { Zone } from '@/types';
 
 export async function POST(
@@ -7,6 +9,7 @@ export async function POST(
   ctx: { params: Promise<{ id: string }> }
 ) {
   try {
+    await ensureSchema();
     const { id: zoneId } = await ctx.params;
     const { player_id } = await req.json();
 
@@ -37,6 +40,9 @@ export async function POST(
       // Claim the zone
       const wasOwned = !!zone.owner_id;
 
+      // Pay the outgoing owner everything the zone earned up to this moment
+      if (wasOwned) await settleYield(zone.owner_id);
+
       [updatedZone] = await sql`
         UPDATE zones
         SET owner_id = ${player.id},
@@ -44,7 +50,8 @@ export async function POST(
             owner_color = ${player.avatar_color},
             state = 'claimed',
             claim_strength = 50,
-            trace_count = trace_count + 1
+            trace_count = trace_count + 1,
+            yield_collected_at = NOW()
         WHERE id = ${zoneId}
         RETURNING *
       `;
@@ -78,7 +85,7 @@ export async function POST(
       trace_count: updatedZone.trace_count,
     };
 
-    return NextResponse.json({ zone: resultZone, player: updatedPlayer });
+    return NextResponse.json({ zone: resultZone, player: publicPlayer(updatedPlayer) });
   } catch (err) {
     console.error('POST /api/game/zones/[id]/surf', err);
     return NextResponse.json({ error: 'Surf failed' }, { status: 500 });

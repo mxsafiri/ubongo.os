@@ -20,6 +20,24 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Tests
+
+```bash
+npm test                                            # game logic + balance simulations
+TEST_DATABASE_URL=postgres://user@host/db npm test  # + Tide economy against real Postgres
+```
+
+- `tests/chaserAI.test.ts` — rival-crew balance: every escape route works (top speed, timed
+  jumps, well-timed cuts, tail-whip, luring into walls) and every failure mode still bites
+  (cruising, stopping, mistimed moves). Retuning chasers without breaking the game should
+  keep these green.
+- `tests/crewMotion.test.ts` — remote riders stay smooth and close to their true position.
+- `tests/motion.test.ts` — springs are stable and frame-rate independent.
+- `tests/collision.test.ts` — riders scrape along walls, crash into them square-on, clear
+  low roofs in a jump, and brushing building corners doesn't bleed speed.
+- `tests/economy.db.test.ts` — yield, builds, run payouts and heartbeats through the real API
+  routes and Neon driver, in a throwaway schema. Skipped when `TEST_DATABASE_URL` is unset.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

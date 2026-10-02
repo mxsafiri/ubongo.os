@@ -7,6 +7,13 @@ import { useGameStore } from '@/store/game';
 import { sfx } from '@/lib/game/sfx';
 import { createRunnerLayer } from './RunnerLayer';
 import { createCrewLayer } from './CrewLayer';
+import { ChaseCamera, createShockwave, createWake } from './runFx';
+import { createChaserLayer } from './ChaserLayer';
+import { CHASER, createChaseWorld, stepChase, whip, whipCooldown, type ChaseWorld } from './chaserAI';
+import { isBlocked, resolveRider } from './collision';
+import { createBuildingSource } from './buildingSource';
+import { QualityGovernor, deviceQualityHints, initialQuality, type QualitySettings } from '@/lib/game/quality';
+import { setMapPixelRatioCap } from '@/lib/map/pixelRatio';
 
 /* ── Movement physics (all rates are per-second; frame-rate independent) ── */
 const MAX_SPEED = 74;         // m/s on the board
@@ -16,14 +23,6 @@ const DECEL_RATE = 2.8;       // coast friction
 const BRAKE_RATE = 6.5;       // hard brake
 const TURN_RATE = 2.5;        // rad/s at full steer
 
-/* ── Chase camera (Subway Surfers framing: behind, above, looking ahead).
-       Steep ~45° down-angle so buildings rarely occlude the character and
-       the runner always sits in the lower third of the frame. ── */
-const CAM_BACK_M = 50;
-const CAM_ALT_M = 46;
-const LOOK_AHEAD_M = 12;
-const CAM_POS_RATE = 3.2;     // camera position smoothing
-const CAM_TGT_RATE = 6.0;     // look-target smoothing
 
 /* ── Run economy ── */
 const COIN_VALUE = 25;
@@ -46,7 +45,17 @@ const CRASH_STUN_MS = 900;
 const CRASH_LOSS_PCT = 0.3;
 const BODA_RIDE_MS = 8000;    // boost duration after mounting a boda
 
+/* ── Multiplayer ── */
+const HEARTBEAT_MS = 1250;    // position + motion broadcast while riding
+
 const M_PER_DEG_LAT = 110574;
+
+/** Haptic tap on phones that support it (Android); silently nothing elsewhere. */
+function buzz(pattern: number | number[]) {
+  try {
+    navigator.vibrate?.(pattern);
+  } catch { /* not allowed here */ }
+}
 
 interface Coin { id: number; lng: number; lat: number }
 interface Obstacle { id: number; lng: number; lat: number; emoji: string; marker: mapboxgl.Marker }
@@ -75,7 +84,8 @@ function normAngle(a: number) {
  */
 export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void }) {
   const player = useGameStore((s) => s.player);
-  const updateTokens = useGameStore((s) => s.updateTokens);
+  const startRun = useGameStore((s) => s.startRun);
+  const bankRun = useGameStore((s) => s.bankRun);
   const addNotification = useGameStore((s) => s.addNotification);
   const [runTide, setRunTide] = useState(0);
   const [distKm, setDistKm] = useState(0);
@@ -88,9 +98,15 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
   const joyRef = useRef({ active: false, x: 0, y: 0 });
   const speedRef = useRef(0);          // m/s
   const headingRef = useRef(0);        // rad, clockwise from north
-  const camPosRef = useRef<{ lng: number; lat: number }>({ lng: 0, lat: 0 });
-  const camTgtRef = useRef<{ lng: number; lat: number }>({ lng: 0, lat: 0 });
-  const camYawRef = useRef(0);
+  const yawRateRef = useRef(0);        // rad/s, smoothed — sent so others can dead-reckon our arc
+  // Chase camera (framing, speed pull-back, turn aim, impact shake) — see runFx
+  const [chase] = useState(() => new ChaseCamera());
+  const speedFxRef = useRef<HTMLDivElement>(null);
+  // Rival crew: threat arrows, the whip button's cooldown ring, bonus pop-ups
+  const threatRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const whipBtnRef = useRef<HTMLDivElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const whipRef = useRef<() => void>(() => {});
   const bodaUntilRef = useRef(0);
   const coinsRef = useRef<Coin[]>([]);
   const coinIdRef = useRef(0);
@@ -100,6 +116,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
   const stunUntilRef = useRef(0);
   const distRef = useRef(0);
   const runTideRef = useRef(0);
+  const runIdRef = useRef<Promise<string | null> | null>(null);
   const lastZoneRef = useRef<{ id: string | null; at: number }>({ id: null, at: 0 });
   const knobRef = useRef<HTMLDivElement>(null);
   const endedRef = useRef(false);
@@ -107,20 +124,9 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
   // Snap the chase camera directly behind the runner — no smoothing.
   // The one-tap answer to "where am I?"
   const recenter = useCallback(() => {
-    const p = posRef.current;
-    const mLng = metersPerDegLng(p.lat);
-    const fx = Math.sin(headingRef.current);
-    const fy = Math.cos(headingRef.current);
-    camPosRef.current = {
-      lng: p.lng - (fx * CAM_BACK_M) / mLng,
-      lat: p.lat - (fy * CAM_BACK_M) / M_PER_DEG_LAT,
-    };
-    camTgtRef.current = {
-      lng: p.lng + (fx * LOOK_AHEAD_M) / mLng,
-      lat: p.lat + (fy * LOOK_AHEAD_M) / M_PER_DEG_LAT,
-    };
+    chase.snap(posRef.current, headingRef.current);
     sfx.whoosh();
-  }, []);
+  }, [chase]);
 
   const doJump = useCallback(() => {
     if (jumpStartRef.current === 0 && performance.now() >= stunUntilRef.current) {
@@ -132,16 +138,31 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
   const endRun = useCallback(() => {
     if (endedRef.current) return;
     endedRef.current = true;
-    const km = distRef.current / 1000;
-    const earned = runTideRef.current;
-    if (distRef.current > 400) {
+    const distM = distRef.current;
+    const km = distM / 1000;
+    const claimed = runTideRef.current;
+    const runId = runIdRef.current;
+    onExit();
+
+    // Bank the run server-side; the balance only moves once the server pays
+    void (async () => {
+      const id = runId ? await runId : null;
+      const earned = id ? await bankRun(id, distM, claimed) : null;
+      if (distM <= 400) return;
       addNotification({
         type: 'token_earned',
         title: `🏄 Run complete — ${km.toFixed(1)} km`,
-        message: earned > 0 ? `Bagged +${earned} Tide on the streets.` : 'No coins this run — ride the gold lines.',
+        message: earned === null
+          ? 'Could not bank this run — the city lost your signal.'
+          : earned > 0
+            ? `Banked +${earned} Tide${earned < claimed ? ` (of ${claimed} — daily run cap)` : ''}.`
+            : 'No coins this run — ride the gold lines.',
       });
-    }
-    if (distRef.current > 1000 && earned > 0 && player) {
+      if (distM > 1000 && earned && player) postRunEvent(earned);
+    })();
+
+    function postRunEvent(earned: number) {
+      if (!player) return;
       fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -155,8 +176,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         }),
       });
     }
-    onExit();
-  }, [addNotification, onExit, player]);
+  }, [addNotification, bankRun, onExit, player]);
   const endRunRef = useRef(endRun);
   endRunRef.current = endRun;
 
@@ -166,22 +186,10 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     posRef.current = { lng: center.lng, lat: center.lat };
     headingRef.current = (map.getBearing() * Math.PI) / 180;
     speedRef.current = 0;
+    runIdRef.current = startRun();
 
     // Seed the chase camera behind the runner so the first frame is framed right
-    {
-      const mLng = metersPerDegLng(center.lat);
-      const fx = Math.sin(headingRef.current);
-      const fy = Math.cos(headingRef.current);
-      camPosRef.current = {
-        lng: center.lng - (fx * CAM_BACK_M) / mLng,
-        lat: center.lat - (fy * CAM_BACK_M) / M_PER_DEG_LAT,
-      };
-      camTgtRef.current = {
-        lng: center.lng + (fx * LOOK_AHEAD_M) / mLng,
-        lat: center.lat + (fy * LOOK_AHEAD_M) / M_PER_DEG_LAT,
-      };
-      camYawRef.current = headingRef.current;
-    }
+    chase.snap(posRef.current, headingRef.current);
 
     // The game owns the camera during a run — stop map gestures from
     // fighting it (drag/zoom jitter was disorienting riders)
@@ -196,7 +204,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     if (!map.getLayer('player-runner')) map.addLayer(runner);
     runner.setState({
       lng: center.lng, lat: center.lat,
-      heading: headingRef.current, speed: 0, lean: 0, jump: 0, mode: 'board',
+      heading: headingRef.current, speed: 0, lean: 0, jump: 0, mode: 'board', crashed: false,
     });
 
     /* ── Handle tag above the character ── */
@@ -212,25 +220,55 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     if (map.getLayer('real-players')) map.setLayoutProperty('real-players', 'visibility', 'none');
 
     const remoteTags = new Map<string, mapboxgl.Marker>();
+    // 1.25 s keeps remote riders within ~20 m of truth (see crewMotion).
+    // Skip a beat while one is in flight so slow responses can't pile up
+    // or land out of order.
+    let hbInFlight = false;
     const heartbeat = async () => {
+      if (hbInFlight) return;
+      hbInFlight = true;
       try {
         const p = posRef.current;
         const res = await fetch('/api/game/players/position', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ player_id: player.id, lat: p.lat, lng: p.lng }),
+          body: JSON.stringify({
+            player_id: player.id,
+            lat: p.lat,
+            lng: p.lng,
+            heading: headingRef.current,
+            speed: speedRef.current,
+            turn: yawRateRef.current,
+            mode: performance.now() < bodaUntilRef.current ? 'boda' : 'board',
+          }),
         });
         if (!res.ok) return;
         const { players: riders } = await res.json();
+        type Rider = {
+          id: string; handle: string; avatar_color: string; lat: number; lng: number;
+          heading: number | null; speed: number | null; turn: number | null; mode: string | null; age_s: number | null;
+        };
         crew.setPlayers(
-          (riders as { id: string; handle: string; avatar_color: string; lat: number; lng: number }[])
+          (riders as Rider[])
             .filter((r) => typeof r.lat === 'number' && typeof r.lng === 'number')
-            .map((r) => ({ id: r.id, handle: r.handle, color: r.avatar_color, lng: r.lng, lat: r.lat })),
+            .map((r) => ({
+              id: r.id, handle: r.handle, color: r.avatar_color, lng: r.lng, lat: r.lat,
+              heading: r.heading ?? undefined,
+              speed: r.speed ?? undefined,
+              turn: r.turn ?? undefined,
+              mode: r.mode === 'boda' ? 'boda' as const : 'board' as const,
+              ageS: r.age_s ?? 0,
+            })),
         );
-      } catch { /* heartbeat is best-effort */ }
+      } catch { /* heartbeat is best-effort */ } finally {
+        hbInFlight = false;
+      }
     };
     heartbeat();
-    const hbInterval = setInterval(heartbeat, 2500);
+    const hbInterval = setInterval(heartbeat, HEARTBEAT_MS);
+
+    // Buildings are solid once the map has told us where they are (set below)
+    let blockedAt: (lng: number, lat: number) => boolean = () => false;
 
     /* ── Coin field ── */
     const spawnCoins = () => {
@@ -292,6 +330,10 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     }
     spawnCoins();
 
+    /* ── Board wake ── */
+    const wake = createWake(map, player.avatar_color);
+    const shock = createShockwave(map, CHASER.WHIP_RANGE_M, CHASER.WHIP_HALF_ANGLE);
+
     /* ── Obstacles ── */
     const spawnObstacle = (heading: number) => {
       if (obstaclesRef.current.length >= OB_MAX) return;
@@ -304,6 +346,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       const lat = p.lat
         + (Math.cos(heading) * ahead + Math.cos(perp) * side) / M_PER_DEG_LAT;
 
+      if (blockedAt(lng, lat)) return; // no traffic inside buildings
       const emoji = OB_EMOJIS[Math.floor(Math.random() * OB_EMOJIS.length)];
       const obEl = document.createElement('div');
       obEl.innerHTML = `<div class="surf-ob${emoji === '🛵' ? ' surf-ob-ride' : ''}">${emoji}</div>`;
@@ -317,6 +360,93 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       obstaclesRef.current = obstaclesRef.current.filter((o) => o.id !== ob.id);
     };
 
+    /* ── Taking a hit (traffic or a rival's grab): stun, lose momentum and Tide ── */
+    const takeHit = (ts: number, trauma: number) => {
+      sfx.crash();
+      chase.addTrauma(trauma);
+      stunUntilRef.current = ts + CRASH_STUN_MS;
+      speedRef.current *= 0.15; // the hit eats your momentum
+      bodaUntilRef.current = 0; // knocked off the bike
+      const loss = Math.floor((runTideRef.current * CRASH_LOSS_PCT) / COIN_VALUE) * COIN_VALUE;
+      if (loss > 0) {
+        runTideRef.current -= loss;
+        setRunTide(runTideRef.current);
+      }
+      setCrashCount((c) => c + 1);
+      buzz(70);
+    };
+
+    /* ── Rival crew ── */
+    const chasers = createChaserLayer('chaser-runners');
+    if (!map.getLayer('chaser-runners')) map.addLayer(chasers);
+    const world: ChaseWorld = createChaseWorld();
+    const origin = { lng: center.lng, lat: center.lat };
+    const mLng0 = metersPerDegLng(origin.lat);
+    const toLocal = (q: { lng: number; lat: number }) => ({
+      x: (q.lng - origin.lng) * mLng0,
+      y: (q.lat - origin.lat) * M_PER_DEG_LAT,
+    });
+    let attackUntil = 0;
+    let lastJumpH = 0;
+
+    /* ── Buildings: solid walls from the live map ── */
+    const buildings = createBuildingSource(map, toLocal);
+    const toLngLat = (x: number, y: number) => ({ lng: origin.lng + x / mLng0, lat: origin.lat + y / M_PER_DEG_LAT });
+    blockedAt = (lng, lat) => {
+      const l = toLocal({ lng, lat });
+      return isBlocked(buildings.index, l.x, l.y);
+    };
+    world.blocked = (x, y) => isBlocked(buildings.index, x, y);
+    let lastScrapeMs = 0;
+
+    /* ── Adaptive quality: phones start lower and the governor adjusts to real fps ── */
+    const governor = new QualityGovernor(initialQuality(deviceQualityHints()));
+    let wakeEvery = 2;
+    let speedLinesOn = true;
+    const applyQuality = (q: QualitySettings) => {
+      setMapPixelRatioCap(q.maxPixelRatio, map);
+      crew.setQuality({ max: q.crewMax, xray: q.crewXray });
+      buildings.setRefreshMs(q.buildingQueryMs);
+      wakeEvery = q.wakeEvery;
+      speedLinesOn = q.speedLines;
+    };
+    applyQuality(governor.settings);
+
+    const pop = (text: string, color: string) => {
+      const el = popRef.current;
+      if (!el) return;
+      el.textContent = text;
+      el.style.color = color;
+      el.classList.remove('surf-pop-go');
+      void el.offsetWidth; // restart the CSS animation
+      el.classList.add('surf-pop-go');
+    };
+    const bank = (amount: number) => {
+      runTideRef.current += amount;
+      setRunTide(runTideRef.current);
+    };
+    const view = () => {
+      const l = toLocal(posRef.current);
+      return { x: l.x, y: l.y, heading: headingRef.current, speed: speedRef.current, jump: lastJumpH };
+    };
+
+    whipRef.current = () => {
+      const now = performance.now();
+      if (now < stunUntilRef.current) return;
+      const hits = whip(world, view());
+      if (hits === null) return; // cooling down
+      attackUntil = now + 450;
+      shock.trigger(posRef.current, headingRef.current);
+      sfx.whoosh();
+      if (hits.length > 0) {
+        buzz([18, 30, 18]);
+        sfx.roundWin();
+        chase.addTrauma(0.25);
+        bank(CHASER.BOUNTY * hits.length);
+        pop(`+${CHASER.BOUNTY * hits.length} KNOCKED OFF${hits.length > 1 ? ` ×${hits.length}` : ''}`, '#FFD84D');
+      }
+    };
+
     /* ── Keyboard ── */
     const setKey = (e: KeyboardEvent, down: boolean) => {
       const k = keysRef.current;
@@ -327,6 +457,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         case 'ArrowRight': case 'd': case 'D': k.right = down; break;
         case ' ': if (down) doJump(); e.preventDefault(); return;
         case 'r': case 'R': if (down) recenter(); return;
+        case 'f': case 'F': case 'e': case 'E': if (down) whipRef.current(); return;
         case 'Escape': if (down) endRunRef.current(); return;
         default: return;
       }
@@ -342,6 +473,8 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     let lastTs = performance.now();
     let lastObSpawn = 0;
     let frame = 0;
+    let prevJumpH = 0;
+    let prevHeading = headingRef.current;
 
     const tick = (ts: number) => {
       const dt = Math.min((ts - lastTs) / 1000, 0.05);
@@ -371,7 +504,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         const jy = joyRef.current.y;
         const m = Math.min(Math.hypot(jx, jy), 1);
         if (m > 0.12) {
-          const desired = Math.atan2(jx, -jy) + camYawRef.current;
+          const desired = Math.atan2(jx, -jy) + chase.yaw;
           const dh = normAngle(desired - headingRef.current);
           const maxTurn = TURN_RATE * dt;
           headingRef.current += Math.max(-maxTurn, Math.min(maxTurn, dh));
@@ -400,6 +533,29 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         p.lat += (Math.cos(headingRef.current) * step) / M_PER_DEG_LAT;
         p.lng += (Math.sin(headingRef.current) * step) / metersPerDegLng(p.lat);
         distRef.current += step;
+
+        // Walls: scrape along them, or crash into them square-on
+        if (buildings.index) {
+          const here = toLocal(p);
+          const r = resolveRider(buildings.index, {
+            x: here.x, y: here.y, heading: headingRef.current, speed: speedRef.current,
+          }, jumpH);
+          if (r.crash || r.scrape) {
+            const ll = toLngLat(r.x, r.y);
+            p.lng = ll.lng;
+            p.lat = ll.lat;
+            headingRef.current = r.heading;
+            speedRef.current = r.speed;
+            if (r.crash && ts >= stunUntilRef.current) {
+              takeHit(ts, 0.8);
+              pop('WALL!', '#FF4757');
+            } else if (r.scrape && ts - lastScrapeMs > 250) {
+              lastScrapeMs = ts;
+              chase.addTrauma(0.12);
+              sfx.miss();
+            }
+          }
+        }
         marker.setLngLat([p.lng, p.lat]);
 
         // Coin pickup
@@ -410,7 +566,6 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         const grabbed = before - coinsRef.current.length;
         if (grabbed > 0) {
           sfx.hit(grabbed);
-          updateTokens(grabbed * COIN_VALUE);
           runTideRef.current += grabbed * COIN_VALUE;
           setRunTide(runTideRef.current);
           syncCoins();
@@ -435,18 +590,9 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
               // Swing onto the boda — 8s of boost
               bodaUntilRef.current = ts + BODA_RIDE_MS;
               sfx.roundWin();
+              chase.addTrauma(0.2);
             } else {
-              sfx.crash();
-              stunUntilRef.current = ts + CRASH_STUN_MS;
-              speedRef.current *= 0.15; // the crash eats your momentum
-              if (onBoda) bodaUntilRef.current = 0; // knocked off the bike
-              const loss = Math.floor((runTideRef.current * CRASH_LOSS_PCT) / COIN_VALUE) * COIN_VALUE;
-              if (loss > 0) {
-                updateTokens(-loss);
-                runTideRef.current -= loss;
-                setRunTide(runTideRef.current);
-              }
-              setCrashCount((c) => c + 1);
+              takeHit(ts, 0.7);
             }
           }
         }
@@ -475,38 +621,100 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         }
       }
 
-      /* ── Chase camera: behind + above, looking down the street.
-             Runs every frame so it keeps settling smoothly at rest. ── */
-      {
-        const mLng = metersPerDegLng(p.lat);
-        const fx = Math.sin(headingRef.current);
-        const fy = Math.cos(headingRef.current);
-        const desiredCam = {
-          lng: p.lng - (fx * CAM_BACK_M) / mLng,
-          lat: p.lat - (fy * CAM_BACK_M) / M_PER_DEG_LAT,
-        };
-        const desiredTgt = {
-          lng: p.lng + (fx * LOOK_AHEAD_M) / mLng,
-          lat: p.lat + (fy * LOOK_AHEAD_M) / M_PER_DEG_LAT,
-        };
-        const kc = 1 - Math.exp(-CAM_POS_RATE * dt);
-        const kt = 1 - Math.exp(-CAM_TGT_RATE * dt);
-        const cp = camPosRef.current;
-        const ct = camTgtRef.current;
-        cp.lng += (desiredCam.lng - cp.lng) * kc;
-        cp.lat += (desiredCam.lat - cp.lat) * kc;
-        ct.lng += (desiredTgt.lng - ct.lng) * kt;
-        ct.lat += (desiredTgt.lat - ct.lat) * kt;
+      if (dt > 0) {
+        const raw = normAngle(headingRef.current - prevHeading) / dt;
+        yawRateRef.current += (raw - yawRateRef.current) * (1 - Math.exp(-8 * dt));
+      }
+      prevHeading = headingRef.current;
 
-        const cam = map.getFreeCameraOptions();
-        cam.position = mapboxgl.MercatorCoordinate.fromLngLat([cp.lng, cp.lat], CAM_ALT_M);
-        cam.lookAtPoint([ct.lng, ct.lat]);
-        map.setFreeCameraOptions(cam);
+      buildings.update(p, ts);
+      // Coins that landed inside buildings move out to open ground
+      if (frame % 45 === 0 && buildings.index) {
+        let moved = false;
+        for (const c of coinsRef.current) {
+          if (!blockedAt(c.lng, c.lat)) continue;
+          for (let i = 0; i < 6; i++) {
+            const ang = Math.random() * Math.PI * 2;
+            const d = 80 + Math.random() * COIN_FIELD_M;
+            const lng = p.lng + (Math.cos(ang) * d) / metersPerDegLng(p.lat);
+            const lat = p.lat + (Math.sin(ang) * d) / M_PER_DEG_LAT;
+            if (!blockedAt(lng, lat)) { c.lng = lng; c.lat = lat; moved = true; break; }
+          }
+        }
+        if (moved) syncCoins();
+      }
 
-        camYawRef.current = Math.atan2(
-          (ct.lng - cp.lng) * mLng,
-          (ct.lat - cp.lat) * M_PER_DEG_LAT,
-        );
+      /* ── Rival crew: simulate, react, render, point at threats ── */
+      lastJumpH = jumpH;
+      for (const ev of stepChase(world, view(), dt, distRef.current)) {
+        if (ev.type === 'spawn') {
+          sfx.aiMove();
+          pop('RIVAL CREW ON YOUR TAIL', '#FF4757');
+        } else if (ev.type === 'caught') {
+          takeHit(ts, 0.85);
+          pop('GRABBED — −30% RUN TIDE', '#FF4757');
+        } else if (ev.type === 'dodged') {
+          sfx.hit(2);
+          bank(CHASER.DODGE_BONUS);
+          pop(`+${CHASER.DODGE_BONUS} SAILED OVER`, '#00E096');
+        } else if (ev.type === 'wipeout') {
+          buzz(25);
+          sfx.roundWin();
+          bank(CHASER.WIPEOUT_BONUS);
+          pop(`+${CHASER.WIPEOUT_BONUS} WIPEOUT`, '#FFD84D');
+        } else if (ev.type === 'escaped') {
+          bank(CHASER.ESCAPE_BONUS);
+          pop(`+${CHASER.ESCAPE_BONUS} SHOOK THEM OFF`, '#00C2FF');
+        }
+      }
+      chasers.setChasers(world.chasers.map((c) => ({
+        id: c.id,
+        lng: origin.lng + c.x / mLng0,
+        lat: origin.lat + c.y / M_PER_DEG_LAT,
+        heading: c.heading,
+        speed01: c.speed / MAX_SPEED,
+        ko: c.state === 'ko',
+      })));
+      if (frame % 3 === 0) {
+        const me = toLocal(p);
+        const hunting = world.chasers
+          .filter((c) => c.state === 'chase')
+          .map((c) => ({ c, d: Math.hypot(c.x - me.x, c.y - me.y) }))
+          .sort((a, b) => a.d - b.d);
+        threatRefs.current.forEach((el, i) => {
+          if (!el) return;
+          const h = hunting[i];
+          if (!h || h.d > 420) { el.style.opacity = '0'; return; }
+          // Bearing relative to where the camera looks: 0 = ahead, π = behind
+          const rel = Math.atan2(h.c.x - me.x, h.c.y - me.y) - chase.yaw;
+          const rx = Math.sin(rel) * 42; // % of half-width
+          const ry = -Math.cos(rel) * 38;
+          el.style.opacity = String(h.d < 60 ? 1 : 0.85);
+          el.style.left = `${50 + rx}%`;
+          el.style.top = `${54 + ry}%`;
+          el.style.transform = `translate(-50%, -50%) rotate(${rel}rad)`;
+          const label = el.querySelector('span');
+          if (label) label.textContent = `${Math.round(h.d)}m`;
+          el.classList.toggle('surf-threat-close', h.d < 60);
+        });
+        if (whipBtnRef.current) {
+          const cd = whipCooldown(world) / CHASER.WHIP_COOLDOWN_S;
+          whipBtnRef.current.style.background = `conic-gradient(rgba(255,71,87,0.85) ${(1 - cd) * 360}deg, rgba(9,13,24,0.6) 0deg)`;
+        }
+      }
+
+      /* ── Chase camera + speed FX. Runs every frame so it keeps settling at rest. ── */
+      // A hard landing kicks the camera
+      if (prevJumpH > 2 && jumpH === 0) chase.addTrauma(0.35);
+      prevJumpH = jumpH;
+      if (onBoda && moving) chase.rumble(0.16 * Math.min(speed01, 1));
+      chase.update(map, p, headingRef.current, speed01, jumpH, dt, ts / 1000);
+      if (governor.frame(dt)) applyQuality(governor.settings);
+      if (frame % wakeEvery === 0) wake.push(p, moving ? speed01 : 0);
+      shock.update(ts);
+      if (frame % 4 === 0 && speedFxRef.current) {
+        const k = Math.min(Math.max((speed01 - 0.5) / 0.6, 0), 1);
+        speedFxRef.current.style.opacity = speedLinesOn ? String(k * (onBoda ? 0.85 : 0.6)) : '0';
       }
 
       // Remote riders' name tags glued to interpolated positions
@@ -545,6 +753,8 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         lean: steer * Math.min(speed01, 1),
         jump: jumpH,
         mode: onBoda ? 'boda' : 'board',
+        crashed: ts < stunUntilRef.current,
+        attacking: ts < attackUntil,
       });
       map.triggerRepaint();
 
@@ -564,6 +774,11 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       obstaclesRef.current = [];
       if (map.getLayer('player-runner')) map.removeLayer('player-runner');
       if (map.getLayer('crew-runners')) map.removeLayer('crew-runners');
+      wake.remove();
+      setMapPixelRatioCap(2, map); // back to the browsing default
+      shock.remove();
+      if (map.getLayer('chaser-runners')) map.removeLayer('chaser-runners');
+      whipRef.current = () => {};
       if (map.getLayer('run-coins-core')) map.removeLayer('run-coins-core');
       if (map.getLayer('run-coins-glow')) map.removeLayer('run-coins-glow');
       if (map.getSource('run-coins')) map.removeSource('run-coins');
@@ -584,8 +799,10 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         essential: true,
       });
     };
+  // Keyed on the id, not the object: balance updates replace `player` and
+  // must not tear down and restart a run in progress.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, player]);
+  }, [map, player?.id]);
 
   /* ── Joystick pointer handling ── */
   const joyStart = (e: React.PointerEvent) => {
@@ -632,6 +849,45 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
           filter: drop-shadow(0 3px 4px rgba(0,0,0,0.55)) drop-shadow(0 0 10px rgba(0,224,150,0.85));
         }
         @keyframes surf-ob-wobble { from { transform:rotate(-4deg); } to { transform:rotate(4deg); } }
+        .surf-threat {
+          position:absolute; z-index:25; pointer-events:none; opacity:0;
+          width:0; height:0; transition: opacity 0.2s;
+        }
+        .surf-threat::before {
+          content:''; position:absolute; left:-11px; top:-30px;
+          border-left:11px solid transparent; border-right:11px solid transparent;
+          border-bottom:20px solid #FF4757;
+          filter: drop-shadow(0 0 6px rgba(255,71,87,0.9));
+        }
+        .surf-threat span {
+          position:absolute; left:50%; top:-4px; transform:translateX(-50%);
+          font-family: var(--font-mono); font-size:10px; font-weight:700; color:#fff;
+          background:rgba(9,13,24,0.8); padding:1px 5px; white-space:nowrap;
+        }
+        .surf-threat-close::before { animation: surf-threat-pulse 0.35s ease-in-out infinite alternate; }
+        @keyframes surf-threat-pulse { to { transform: scale(1.35); } }
+        .surf-pop {
+          position:absolute; left:50%; top:30%; transform:translate(-50%,-50%); z-index:35;
+          font-family: var(--font-arcade); font-size:26px; letter-spacing:0.1em; white-space:nowrap;
+          text-shadow: 0 2px 10px rgba(0,0,0,0.8); pointer-events:none; opacity:0;
+        }
+        .surf-pop-go { animation: surf-pop 1.3s ease-out forwards; }
+        @keyframes surf-pop {
+          0% { opacity:0; transform:translate(-50%,-30%) scale(0.7); }
+          12% { opacity:1; transform:translate(-50%,-50%) scale(1.12); }
+          25% { transform:translate(-50%,-50%) scale(1); }
+          75% { opacity:1; }
+          100% { opacity:0; transform:translate(-50%,-90%) scale(1); }
+        }
+        .surf-speedlines {
+          background: repeating-conic-gradient(from 0deg at 50% 62%,
+            rgba(255,255,255,0.0) 0deg 2.2deg, rgba(255,255,255,0.55) 2.6deg, rgba(255,255,255,0.0) 3deg 7deg);
+          -webkit-mask-image: radial-gradient(ellipse 75% 70% at 50% 62%, transparent 42%, #000 100%);
+          mask-image: radial-gradient(ellipse 75% 70% at 50% 62%, transparent 42%, #000 100%);
+          transition: opacity 0.25s linear;
+          animation: surf-speedlines-flicker 0.12s steps(2) infinite;
+        }
+        @keyframes surf-speedlines-flicker { from { transform: rotate(0deg) scale(1.02); } to { transform: rotate(1.4deg) scale(1.04); } }
       `}</style>
 
       {/* Crash vignette */}
@@ -649,6 +905,9 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         )}
       </AnimatePresence>
 
+      {/* Speed lines — fade in near top speed (opacity driven from the game loop) */}
+      <div ref={speedFxRef} className="surf-speedlines absolute inset-0 z-10 pointer-events-none" style={{ opacity: 0 }} />
+
       {/* Boda boost vignette — subtle green speed edges while mounted */}
       {bodaLeft > 0 && (
         <div className="absolute inset-0 z-10 pointer-events-none"
@@ -656,8 +915,9 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       )}
 
       {/* Run HUD chip */}
-      <div className="absolute top-4 left-4 z-30 flex items-center gap-2.5 px-3 py-2"
+      <div className="absolute left-4 z-30 flex items-center gap-2.5 px-3 py-2"
         style={{
+          top: 'calc(var(--safe-top, 0px) + 16px)',
           background: 'rgba(9,13,24,0.85)',
           border: '1px solid rgba(255,184,0,0.4)',
           backdropFilter: 'blur(10px)',
@@ -728,6 +988,27 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
             transition: 'transform 0.05s linear',
           }}
         />
+      </div>
+
+      {/* Rival threat arrows — positioned and rotated from the game loop */}
+      {[0, 1, 2].map((i) => (
+        <div key={i} ref={(el) => { threatRefs.current[i] = el; }} className="surf-threat"><span /></div>
+      ))}
+      <div ref={popRef} className="surf-pop" />
+
+      {/* Tail-whip: F / E on keyboard; ring fills as the cooldown recovers */}
+      <div ref={whipBtnRef}
+        className="absolute z-30 rounded-full p-[3px]"
+        style={{ right: 106, bottom: 'calc(var(--screen-pad-bottom, 24px) + 30px)', background: 'rgba(255,71,87,0.85)' }}>
+        <button
+          className="flex flex-col items-center justify-center touch-none select-none rounded-full"
+          style={{ width: 58, height: 58, background: 'rgba(9,13,24,0.88)', backdropFilter: 'blur(6px)' }}
+          onPointerDown={(e) => { e.preventDefault(); whipRef.current(); }}
+          aria-label="Tail-whip the rider behind you"
+        >
+          <span style={{ fontFamily: 'var(--font-arcade)', fontSize: '14px', letterSpacing: '0.06em', color: '#FF4757', lineHeight: 1 }}>WHIP</span>
+          <span className="hidden lg:block" style={{ fontFamily: 'var(--font-mono)', fontSize: '8px', color: '#8BA3BE', marginTop: 2 }}>F</span>
+        </button>
       </div>
 
       {/* Mobile jump button */}

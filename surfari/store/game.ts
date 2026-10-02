@@ -32,7 +32,9 @@ interface GameStore {
   setActiveTab: (tab: GameTab) => void;
   toggleTheme: () => void;
   setPlayer: (player: PlayerCard) => void;
-  updateTokens: (amount: number) => void;
+  syncPlayer: () => Promise<number>;
+  startRun: () => Promise<string | null>;
+  bankRun: (runId: string, distanceM: number, tide: number) => Promise<number | null>;
   setMapView: (view: Partial<MapViewState>) => void;
   setMapLoaded: (loaded: boolean) => void;
   setNearbyZones: (zones: Zone[]) => void;
@@ -49,7 +51,7 @@ interface GameStore {
   fetchZones: () => Promise<void>;
   surfZone: (zoneId: string) => Promise<void>;
   setPlantSite: (site: { lng: number; lat: number } | null) => void;
-  plantTurf: () => Promise<Zone | null>;
+  plantTurf: () => Promise<{ zone: Zone } | { error: string }>;
   buildZone: (zoneId: string) => Promise<boolean>;
   setSidebarCollapsed: (collapsed: boolean) => void;
 }
@@ -82,10 +84,68 @@ export const useGameStore = create<GameStore>()(
 
     setPlayer: (player) => set({ player }),
 
-    updateTokens: (amount) => {
+    // Tide only ever changes on the server — these pull the authoritative
+    // balance back after the server has settled yield or paid out a run.
+    syncPlayer: async () => {
       const { player } = get();
-      if (!player) return;
-      set({ player: { ...player, tide_tokens: player.tide_tokens + amount } });
+      if (!player) return 0;
+      try {
+        const res = await fetch('/api/game/players', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ player_id: player.id, sync: true }),
+        });
+        if (!res.ok) return 0;
+        const { player: fresh, yield_collected } = await res.json();
+        const current = get().player;
+        if (fresh && current && current.id === fresh.id) {
+          set({ player: { ...current, ...fresh, geo_lat: current.geo_lat, geo_lng: current.geo_lng } });
+        }
+        return yield_collected ?? 0;
+      } catch (err) {
+        console.error('syncPlayer', err);
+        return 0;
+      }
+    },
+
+    startRun: async () => {
+      const { player } = get();
+      if (!player) return null;
+      try {
+        const res = await fetch('/api/game/runs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ player_id: player.id }),
+        });
+        if (!res.ok) return null;
+        const { run_id } = await res.json();
+        return run_id ?? null;
+      } catch (err) {
+        console.error('startRun', err);
+        return null;
+      }
+    },
+
+    bankRun: async (runId, distanceM, tide) => {
+      const { player } = get();
+      if (!player) return null;
+      try {
+        const res = await fetch(`/api/game/runs/${runId}/finish`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ player_id: player.id, distance_m: distanceM, tide }),
+        });
+        if (!res.ok) return null;
+        const { payout, player: fresh } = await res.json();
+        const current = get().player;
+        if (fresh && current && current.id === fresh.id) {
+          set({ player: { ...current, ...fresh, geo_lat: current.geo_lat, geo_lng: current.geo_lng } });
+        }
+        return payout ?? 0;
+      } catch (err) {
+        console.error('bankRun', err);
+        return null;
+      }
     },
 
     setMapView: (view) =>
@@ -225,14 +285,17 @@ export const useGameStore = create<GameStore>()(
 
     plantTurf: async () => {
       const { player, plant_site } = get();
-      if (!player || !plant_site) return null;
+      if (!player || !plant_site) return { error: 'Pick a spot on the map first' };
       try {
         const res = await fetch('/api/game/zones', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ player_id: player.id, lat: plant_site.lat, lng: plant_site.lng }),
         });
-        if (!res.ok) return null;
+        if (!res.ok) {
+          const { error } = await res.json().catch(() => ({ error: null }));
+          return { error: error ?? 'Could not plant here' };
+        }
         const { zone, player: updatedPlayer } = await res.json();
         set((state) => ({
           player: updatedPlayer ?? state.player,
@@ -241,10 +304,10 @@ export const useGameStore = create<GameStore>()(
           plant_site: null,
     sidebarCollapsed: false,
         }));
-        return zone as Zone;
+        return { zone: zone as Zone };
       } catch (err) {
         console.error('plantTurf', err);
-        return null;
+        return { error: 'Lost connection — try again' };
       }
     },
   }))

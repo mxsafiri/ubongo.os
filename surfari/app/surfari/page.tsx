@@ -28,6 +28,7 @@ export default function SurfariPage() {
   const setPhase = useGameStore((s) => s.setPhase);
   const setPlayer = useGameStore((s) => s.setPlayer);
   const fetchZones = useGameStore((s) => s.fetchZones);
+  const syncPlayer = useGameStore((s) => s.syncPlayer);
   const sidebarCollapsed = useGameStore(selectSidebarCollapsed);
   const unread = useGameStore(selectUnreadCount);
   const setSidebarCollapsed = useGameStore((s) => s.setSidebarCollapsed);
@@ -46,7 +47,15 @@ export default function SurfariPage() {
       .then((data) => {
         if (!data?.player) return;
         setPlayer({ ...data.player, geo_lat: null, geo_lng: null });
-        useGameStore.getState().setPhase('exploring');
+        const store = useGameStore.getState();
+        store.setPhase('exploring');
+        if (data.yield_collected > 0) {
+          store.addNotification({
+            type: 'token_earned',
+            title: `🌊 Your turf earned +${data.yield_collected.toLocaleString()} Tide`,
+            message: 'Collected while you were away. Idle turf stops paying after 7 days.',
+          });
+        }
       })
       .catch(() => {/* silent — onboarding shows normally */});
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -65,6 +74,15 @@ export default function SurfariPage() {
     if (phase === 'exploring') fetchZones();
   }, [phase, fetchZones]);
 
+  const showHUD = phase === 'exploring' || phase === 'surfing' || phase === 'challenge' || phase === 'result';
+
+  // Turf pays out continuously; pull the settled balance every minute
+  useEffect(() => {
+    if (!showHUD) return;
+    const t = setInterval(() => { void syncPlayer(); }, 60_000);
+    return () => clearInterval(t);
+  }, [showHUD, syncPlayer]);
+
   // Sync theme class to document root
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
@@ -77,7 +95,6 @@ export default function SurfariPage() {
     return () => clearTimeout(t);
   }, [phase, setPhase]);
 
-  const showHUD = phase === 'exploring' || phase === 'surfing' || phase === 'challenge' || phase === 'result';
   const mapActive = !isDesktop && (activeTab === 'map' || activeTab === 'explore');
 
   /* ── Desktop layout ── */
