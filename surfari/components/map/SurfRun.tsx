@@ -9,6 +9,7 @@ import { createRunnerLayer } from './RunnerLayer';
 import { createCrewLayer } from './CrewLayer';
 import { ChaseCamera, createShockwave, createWake } from './runFx';
 import { createChaserLayer } from './ChaserLayer';
+import { TRAFFIC, createTrafficLayer, preloadTraffic, type TrafficKind } from './TrafficLayer';
 import { CHASER, createChaseWorld, stepChase, whip, whipCooldown, type ChaseWorld } from './chaserAI';
 import { clearDistance, findOpenSpot, isBlocked, openHeading, resolveRider } from './collision';
 import { createBuildingSource } from './buildingSource';
@@ -38,11 +39,13 @@ const JUMP_H_M = 11;
 const OB_CLEAR_JUMP_M = 3.5;
 
 /* ── Traffic ── */
-const OB_EMOJIS = ['🛵', '🛺', '🚧', '🐐'];
+// What turns up on the street: parked bodas to grab, taxis and cars that
+// drive (with you or against you), dumpsters that just sit there
+const OB_MIX: [TrafficKind, number][] = [['boda', 0.3], ['taxi', 0.25], ['car', 0.25], ['dumpster', 0.2]];
 const OB_MAX = 12;
 const OB_SPAWN_MS = 1000;
-const OB_COLLIDE_M = 28;
 const OB_DESPAWN_M = 650;
+const CAR_SPEED_MS: [number, number] = [8, 16];
 const CRASH_STUN_MS = 900;
 const CRASH_LOSS_PCT = 0.3;
 const BODA_RIDE_MS = 8000;    // boost duration after mounting a boda
@@ -66,7 +69,7 @@ function buzz(pattern: number | number[]) {
 }
 
 interface Coin { id: number; lng: number; lat: number }
-interface Obstacle { id: number; lng: number; lat: number; emoji: string; marker: mapboxgl.Marker }
+interface Obstacle { id: number; lng: number; lat: number; kind: TrafficKind; heading: number; speed: number }
 
 function metersPerDegLng(lat: number) {
   return 111320 * Math.cos((lat * Math.PI) / 180);
@@ -357,30 +360,49 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     const wake = createWake(map, player.avatar_color);
     const shock = createShockwave(map, CHASER.WHIP_RANGE_M, CHASER.WHIP_HALF_ANGLE);
 
-    /* ── Obstacles ── */
+    /* ── Traffic ── */
+    preloadTraffic();
+    const traffic = createTrafficLayer('run-traffic');
+    if (!map.getLayer('run-traffic')) map.addLayer(traffic);
+    const syncTraffic = () => traffic.setTraffic(obstaclesRef.current.map((o) => ({ id: o.id, kind: o.kind, lng: o.lng, lat: o.lat, heading: o.heading })));
+    const pickKind = () => {
+      let r = Math.random();
+      for (const [k, w] of OB_MIX) { if ((r -= w) <= 0) return k; }
+      return OB_MIX[0][0];
+    };
     const spawnObstacle = (heading: number) => {
       if (obstaclesRef.current.length >= OB_MAX) return;
       const p = posRef.current;
       const ahead = 170 + Math.random() * 220;
-      const side = (Math.random() - 0.5) * 120;
+      const side = (Math.random() - 0.5) * 60;
       const perp = heading + Math.PI / 2;
       const lng = p.lng
         + (Math.sin(heading) * ahead + Math.sin(perp) * side) / metersPerDegLng(p.lat);
       const lat = p.lat
         + (Math.cos(heading) * ahead + Math.cos(perp) * side) / M_PER_DEG_LAT;
-
-      if (blockedAt(lng, lat)) return; // no traffic inside buildings
-      const emoji = OB_EMOJIS[Math.floor(Math.random() * OB_EMOJIS.length)];
-      const obEl = document.createElement('div');
-      obEl.innerHTML = `<div class="surf-ob${emoji === '🛵' ? ' surf-ob-ride' : ''}">${emoji}</div>`;
-      const obMarker = new mapboxgl.Marker({ element: obEl, anchor: 'bottom' })
-        .setLngLat([lng, lat])
-        .addTo(map);
-      obstaclesRef.current.push({ id: obIdRef.current++, lng, lat, emoji, marker: obMarker });
+      if (blockedAt(lng, lat)) return; // nothing parks inside buildings
+      const kind = pickKind();
+      const drives = kind === 'taxi' || kind === 'car';
+      // Cars run with the traffic or straight at you; bodas park at an angle
+      const obHeading = drives ? heading + (Math.random() < 0.5 ? Math.PI : 0) : heading + (Math.random() - 0.5) * 1.6;
+      const speed = drives ? CAR_SPEED_MS[0] + Math.random() * (CAR_SPEED_MS[1] - CAR_SPEED_MS[0]) : 0;
+      obstaclesRef.current.push({ id: obIdRef.current++, lng, lat, kind, heading: obHeading, speed });
+      syncTraffic();
     };
     const removeObstacle = (ob: Obstacle) => {
-      ob.marker.remove();
       obstaclesRef.current = obstaclesRef.current.filter((o) => o.id !== ob.id);
+      syncTraffic();
+    };
+    const driveTraffic = (dt: number) => {
+      for (const o of obstaclesRef.current) {
+        if (o.speed <= 0) continue;
+        const lat = o.lat + (Math.cos(o.heading) * o.speed * dt) / M_PER_DEG_LAT;
+        const lng = o.lng + (Math.sin(o.heading) * o.speed * dt) / metersPerDegLng(o.lat);
+        if (blockedAt(lng, lat)) { o.speed = 0; continue; } // pulled up at a wall
+        o.lat = lat;
+        o.lng = lng;
+      }
+      syncTraffic();
     };
 
     /* ── Taking a hit (traffic or a rival's grab): stun, lose momentum and Tide ── */
@@ -676,11 +698,11 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         // Contact: mount bodas, crash into everything else — unless airborne
         if (jumpH < OB_CLEAR_JUMP_M && speedRef.current > 6) {
           const hit = obstaclesRef.current.find(
-            (o) => distM(o.lng, o.lat, p.lng, p.lat) <= OB_COLLIDE_M
+            (o) => distM(o.lng, o.lat, p.lng, p.lat) <= TRAFFIC[o.kind].radiusM
           );
           if (hit) {
             removeObstacle(hit);
-            if (hit.emoji === '🛵') {
+            if (TRAFFIC[hit.kind].mountable) {
               // Swing onto the boda — 8s of boost
               bodaUntilRef.current = ts + BODA_RIDE_MS;
               sfx.roundWin();
@@ -722,6 +744,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       prevHeading = headingRef.current;
 
       buildings.update(p, ts);
+      driveTraffic(dt);
       // Coins that landed inside buildings move out to open ground
       if (frame % 45 === 0 && buildings.index) {
         let moved = false;
@@ -868,8 +891,8 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       chase.setClearance(null);
       remoteTags.forEach((t) => t.remove());
       remoteTags.clear();
-      obstaclesRef.current.forEach((o) => o.marker.remove());
       obstaclesRef.current = [];
+      if (map.getLayer('run-traffic')) map.removeLayer('run-traffic');
       if (map.getLayer('player-runner')) map.removeLayer('player-runner');
       if (map.getLayer('crew-runners')) map.removeLayer('crew-runners');
       wake.remove();
@@ -950,16 +973,6 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
           border:1px solid rgba(255,255,255,0.25); letter-spacing:0.04em; white-space:nowrap;
           pointer-events:none;
         }
-        .surf-ob {
-          font-size:30px; line-height:1;
-          filter: drop-shadow(0 3px 4px rgba(0,0,0,0.55));
-          animation: surf-ob-wobble 0.7s ease-in-out infinite alternate;
-          pointer-events:none;
-        }
-        .surf-ob-ride {
-          filter: drop-shadow(0 3px 4px rgba(0,0,0,0.55)) drop-shadow(0 0 10px rgba(0,224,150,0.85));
-        }
-        @keyframes surf-ob-wobble { from { transform:rotate(-4deg); } to { transform:rotate(4deg); } }
         .surf-threat {
           position:absolute; z-index:25; pointer-events:none; opacity:0;
           width:0; height:0; transition: opacity 0.2s;

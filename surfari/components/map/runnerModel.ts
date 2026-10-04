@@ -8,33 +8,43 @@ import { clamp, damp, dampAngle, spring, stepSpring, wrapAngle, type Spring } fr
 // Shared runner model — used by RunnerLayer (the local player) and
 // CrewLayer (remote riders). ~1.8 model units tall.
 //
-// The character is a rigged, animated glTF (public/models/runner.glb, CC0)
-// driven by a small animation state machine with crossfades. On top of the
-// clips, a physics layer derives body motion from how the rider actually
-// moves: banking from lateral acceleration, weight shifts from throttle and
-// brake, compression on take-off and landing, head and shoulders turned to
-// look down the line. Until the model has loaded — or if it never does — a
+// The character is KayKit's hooded rider (public/models/rider.glb, CC0),
+// its outfit recoloured to each rider's colour, driven by a small animation
+// state machine with crossfades between its own clips: a crouched riding
+// stance, jump, fall, kick (the tail-whip) and seated (on a boda). The body
+// motion on top comes from how the rider actually moves — banking from
+// lateral acceleration, weight shifts from throttle and brake, compression on
+// take-off and landing — applied to the whole body, never by bending bones
+// against the clip. Until the model has loaded — or if it never does — a
 // procedural stand-in is shown, so a rider is never invisible.
 
 export type RideMode = 'board' | 'boda';
 
-export const RUNNER_MODEL_URL = '/models/runner.glb';
+export const RUNNER_MODEL_URL = '/models/rider.glb';
+export const BODA_MODEL_URL = '/models/boda.glb';
 const RIG_HEIGHT = 1.8;        // model units, matches the procedural stand-in
 const BOARD_TOP = 0.1;         // feet rest on the deck
-const BODA_SEAT = 0.42;        // hip drop so the rider sits on the seat
+const BODA_SEAT = 0.35;        // the seated clip's hips land on the boda's seat…
+const BODA_SEAT_Z = -0.25;     // …just behind the tank
 const CROSSFADE_S = 0.18;
+const CRASH_RECOVER_S = 0.4;   // getting back up off the floor takes a moment
 const SURF_STANCE = Math.PI * 0.42;  // sideways on the deck, like a real surfer
+const HEAD_AHEAD = 0.55;       // side-on, the head turns to look down the street
+
+// The rider's outfit is green in the source texture; it's recoloured per rider
+const OUTFIT_HUE = 0.4;
+const OUTFIT_HUE_TOL = 0.09;
 
 type Clip = 'Idle' | 'Surf' | 'Jump' | 'Crash' | 'Ride' | 'Whip';
 
 // Which clip in the model plays each state, and how
-const CLIPS: Record<Clip, { name: string; once?: boolean }> = {
-  Idle:  { name: 'Idle' },
-  Surf:  { name: 'Idle' },              // stance + arm pose is layered on top
-  Jump:  { name: 'Jump', once: true },
-  Crash: { name: 'Death', once: true },
-  Ride:  { name: 'Sitting', once: true },
-  Whip:  { name: 'Punch', once: true },   // tail-whip at a chaser
+const CLIPS: Record<Clip, { name: string; once?: boolean; speed?: number }> = {
+  Idle:  { name: 'Unarmed_Idle' },
+  Surf:  { name: '2H_Melee_Idle' },             // low, wide, knees bent: a riding stance
+  Jump:  { name: 'Jump_Idle' },
+  Crash: { name: 'Death_A', once: true, speed: 1.5 },
+  Ride:  { name: 'Sit_Chair_Idle' },
+  Whip:  { name: 'Unarmed_Melee_Attack_Kick', once: true, speed: 1.3 }, // kick back at a chaser
 };
 
 interface Rig {
@@ -44,13 +54,7 @@ interface Rig {
   actions: Record<Clip, THREE.AnimationAction>;
   state: Clip | null;
   stance: number;                       // current yaw offset (radians)
-  bones: {
-    shoulderL: THREE.Object3D | null;
-    shoulderR: THREE.Object3D | null;
-    abdomen: THREE.Object3D | null;
-    head: THREE.Object3D | null;
-  };
-  armSpread: number;                    // 0..1, eased toward the target pose
+  head: THREE.Object3D | null;
 }
 
 /** Physics state behind the secondary motion — one per character. */
@@ -85,7 +89,7 @@ export interface CharParts {
   board: THREE.Mesh;
   boardStripe: THREE.Mesh;
   boda: THREE.Group;
-  wheels: THREE.Mesh[];
+  wheels: THREE.Object3D[];
   shadow: THREE.Mesh;
   xray: THREE.MeshBasicMaterial;
   lastT: number;
@@ -95,16 +99,77 @@ export interface CharParts {
 
 /* ── Model loading (once per page) ── */
 
-let modelPromise: Promise<GLTF> | null = null;
+const models = new Map<string, Promise<GLTF>>();
 
-export function loadRunnerModel(): Promise<GLTF> {
-  if (!modelPromise) {
-    modelPromise = new GLTFLoader().loadAsync(RUNNER_MODEL_URL).catch((err) => {
-      modelPromise = null; // allow a later retry
+function loadModel(url: string): Promise<GLTF> {
+  let p = models.get(url);
+  if (!p) {
+    p = new GLTFLoader().loadAsync(url).catch((err) => {
+      models.delete(url); // allow a later retry
       throw err;
     });
+    models.set(url, p);
   }
-  return modelPromise;
+  return p;
+}
+
+export function loadRunnerModel(): Promise<GLTF> {
+  return loadModel(RUNNER_MODEL_URL);
+}
+
+export function loadBodaModel(): Promise<GLTF> {
+  return loadModel(BODA_MODEL_URL);
+}
+
+/* ── Outfit colour: the rider's colour painted into the palette texture ── */
+
+const outfitTextures = new Map<string, THREE.Texture>();
+
+/**
+ * The model is textured from a small palette image; every green swatch is
+ * outfit. Repaint those in the rider's colour, keeping each swatch's
+ * relative shade so folds and trims still read. One texture per colour,
+ * shared by every rider wearing it.
+ */
+function outfitTexture(map: THREE.Texture, accent: string): THREE.Texture {
+  const key = `${map.uuid}:${accent}`;
+  const cached = outfitTextures.get(key);
+  if (cached) return cached;
+  const img = map.image as CanvasImageSource & { width: number; height: number };
+  const canvas = document.createElement('canvas');
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const g = canvas.getContext('2d');
+  if (!g) return map;
+  g.drawImage(img, 0, 0);
+  const data = g.getImageData(0, 0, canvas.width, canvas.height);
+  const px = data.data;
+  const c = new THREE.Color();
+  const hsl = { h: 0, s: 0, l: 0 };
+  const to = { h: 0, s: 0, l: 0 };
+  new THREE.Color(accent).getHSL(to, THREE.SRGBColorSpace);
+  for (let i = 0; i < px.length; i += 4) {
+    c.setRGB(px[i] / 255, px[i + 1] / 255, px[i + 2] / 255, THREE.SRGBColorSpace);
+    c.getHSL(hsl, THREE.SRGBColorSpace);
+    const dh = Math.abs(hsl.h - OUTFIT_HUE);
+    if (Math.min(dh, 1 - dh) > OUTFIT_HUE_TOL || hsl.s < 0.15) continue;
+    // Keep each swatch's shade relative to the outfit's mid-green
+    c.setHSL(to.h, Math.max(to.s, 0.55), clamp(to.l + (hsl.l - 0.33) * 0.9, 0.1, 0.9), THREE.SRGBColorSpace);
+    px[i] = c.r * 255;
+    px[i + 1] = c.g * 255;
+    px[i + 2] = c.b * 255;
+  }
+  g.putImageData(data, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.flipY = map.flipY;
+  tex.colorSpace = map.colorSpace;
+  tex.magFilter = map.magFilter;
+  tex.minFilter = map.minFilter;
+  tex.wrapS = map.wrapS;
+  tex.wrapT = map.wrapT;
+  tex.channel = map.channel;
+  outfitTextures.set(key, tex);
+  return tex;
 }
 
 function attachRig(parts: CharParts, gltf: GLTF, accent: string) {
@@ -120,8 +185,8 @@ function attachRig(parts: CharParts, gltf: GLTF, accent: string) {
   const s = RIG_HEIGHT / h;
   root.scale.setScalar(s);
 
-  // Per-rider materials: tint the body in the rider's colour. Geometry is
-  // shared with the cached source model, so it's flagged to survive disposal.
+  // Per-rider materials: the outfit in the rider's colour. Geometry and the
+  // recoloured textures are shared, so they're flagged to survive disposal.
   root.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
     if (!mesh.isMesh) return;
@@ -129,7 +194,13 @@ function attachRig(parts: CharParts, gltf: GLTF, accent: string) {
     mesh.frustumCulled = false; // skinned bounds don't follow the animation
     const mats = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).map((m) => {
       const c = (m as THREE.MeshStandardMaterial).clone();
-      if (c.name === 'Main') c.color.set(accent);
+      // Matte cloth and skin: the source's sheen reads as plastic at street level
+      c.roughness = 0.85;
+      c.metalness = 0;
+      if (c.map) {
+        c.map = outfitTexture(c.map, accent);
+        c.userData.sharedMap = true;
+      }
       return c;
     });
     mesh.material = Array.isArray(mesh.material) ? mats : mats[0];
@@ -142,6 +213,7 @@ function attachRig(parts: CharParts, gltf: GLTF, accent: string) {
     const source = byName.get(spec.name);
     if (!source) return; // unexpected model — keep the stand-in
     const action = mixer.clipAction(source.clone(), root);
+    if (spec.speed) action.timeScale = spec.speed;
     if (spec.once) {
       action.setLoop(THREE.LoopOnce, 1);
       action.clampWhenFinished = true;
@@ -149,7 +221,6 @@ function attachRig(parts: CharParts, gltf: GLTF, accent: string) {
     actions[clip] = action;
   }
 
-  const bone = (n: string) => root.getObjectByName(n) ?? null;
   parts.rig = {
     root,
     baseScale: s,
@@ -157,13 +228,7 @@ function attachRig(parts: CharParts, gltf: GLTF, accent: string) {
     actions,
     state: null,
     stance: 0,
-    bones: {
-      shoulderL: bone('ShoulderL'),
-      shoulderR: bone('ShoulderR'),
-      abdomen: bone('Abdomen'),
-      head: bone('Head'),
-    },
-    armSpread: 0,
+    head: root.getObjectByName('head') ?? null,
   };
   parts.fallback.root.visible = false;
   parts.body.add(root);
@@ -177,14 +242,8 @@ function setClip(rig: Rig, next: Clip) {
   if (prev === next) return;
   const to = rig.actions[next];
   const from = prev ? rig.actions[prev] : null;
-  to.reset().setEffectiveTimeScale(1).setEffectiveWeight(1).play();
-  if (from && prev && CLIPS[prev].name === CLIPS[next].name) {
-    // Idle ↔ Surf share a clip: carry the playhead over so nothing pops
-    to.time = from.time;
-    from.stop();
-  } else if (from) {
-    to.crossFadeFrom(from, CROSSFADE_S, false);
-  }
+  to.reset().setEffectiveTimeScale(CLIPS[next].speed ?? 1).setEffectiveWeight(1).play();
+  if (from) to.crossFadeFrom(from, prev === 'Crash' ? CRASH_RECOVER_S : CROSSFADE_S, false);
   rig.state = next;
 }
 
@@ -244,6 +303,7 @@ export function buildCharacter(accent: string): CharParts {
   }
   boda.visible = false;
   body.add(boda);
+  const bodaStandIn = [...boda.children];
 
   // Soft ground shadow — stays on the ground while the body jumps
   const shadow = new THREE.Mesh(
@@ -274,6 +334,16 @@ export function buildCharacter(accent: string): CharParts {
   loadRunnerModel()
     .then((gltf) => attachRig(parts, gltf, accent))
     .catch((err) => console.warn('runner model unavailable — using stand-in', err));
+  loadBodaModel()
+    .then((gltf) => {
+      if (parts.disposed) return;
+      const bike = gltf.scene.clone();
+      bike.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.userData.sharedGeometry = true; });
+      for (const c of bodaStandIn) c.visible = false;
+      boda.add(bike);
+      parts.wheels = ['wheel-front', 'wheel-back'].map((n) => bike.getObjectByName(n)).filter((w): w is THREE.Object3D => !!w);
+    })
+    .catch((err) => console.warn('boda model unavailable — using stand-in', err));
 
   return parts;
 }
@@ -424,39 +494,20 @@ export function animateCharacter(parts: CharParts, m: MotionInput) {
   const sq = clamp(comp, -0.4, 1) * 0.09;
   rig.root.scale.set(rig.baseScale * (1 + sq * 0.5), rig.baseScale * (1 - sq), rig.baseScale * (1 + sq * 0.5));
   rig.root.position.y = riding ? BODA_SEAT : BOARD_TOP;
+  rig.root.position.z = riding ? BODA_SEAT_Z : 0;
 
-  // Turn sideways on the deck while surfing; face forward otherwise
+  // Side-on to the deck while riding it; the kick twists round to strike
+  // behind; square to the bars on a boda and when standing still
   const surfing = rig.state === 'Surf' || rig.state === 'Jump';
-  // Whip twists round to strike behind; otherwise side-on to surf, square to idle
   const stanceTarget = rig.state === 'Whip' ? Math.PI * 0.8 : surfing ? SURF_STANCE : 0;
   rig.stance = damp(rig.stance, stanceTarget, rig.state === 'Whip' ? 16 : 9, dt);
   rig.root.rotation.y = rig.stance;
-  const stanceK = Math.min(rig.stance / SURF_STANCE, 1); // 0 facing forward … 1 side-on
 
-  /* ── Layered bone pose (after the mixer has written the clip pose) ── */
-  const { shoulderL, shoulderR, abdomen, head } = rig.bones;
-
-  // Crouch: lower at speed, deeper under acceleration and on impact, tucked in the air
-  if (abdomen && rig.state !== 'Crash') {
-    const crouch = surfing
-      ? 0.04 + m.speed * 0.1 + dyn.pitch.x * 0.35 + comp * 0.2 + (isAir ? 0.14 : 0)
-      : comp * 0.2;
-    abdomen.rotateX(clamp(crouch, -0.15, 0.45));
-    // Shoulders square to the direction of travel, like a surfer reading the line
-    abdomen.rotateY(-0.42 * stanceK);
-  }
-  if (head && rig.state !== 'Crash') {
-    // Eyes down the line, and into the turn ahead of the body
-    head.rotateY(-0.72 * stanceK - dyn.look.x * 0.35);
-  }
-
-  // Arms out for balance; the outside arm lifts and the inside arm drops in a carve
-  const spreadTarget = rig.state === 'Surf' ? 0.6 + m.speed * 0.4 : rig.state === 'Jump' ? 1.15 : 0;
-  rig.armSpread = damp(rig.armSpread, spreadTarget, 10, dt);
-  if (rig.armSpread > 0.01) {
-    const carve = dyn.bank.x * 1.1 * stanceK;
-    shoulderL?.rotateZ(1.1 * rig.armSpread + carve);
-    shoulderR?.rotateZ(-1.1 * rig.armSpread + carve);
+  // The one layered touch: eyes down the street and into the turn. A single
+  // small head turn on top of the clip, so the pose can't break.
+  if (rig.head && surfing) {
+    const stanceK = clamp(rig.stance / SURF_STANCE, 0, 1);
+    rig.head.rotateY(-HEAD_AHEAD * stanceK - dyn.look.x * 0.3);
   }
 }
 
@@ -528,7 +579,11 @@ export function disposeScene(scene: THREE.Scene) {
   scene.traverse((obj) => {
     if (obj instanceof THREE.Mesh) {
       if (!obj.userData.sharedGeometry) obj.geometry.dispose();
-      (Array.isArray(obj.material) ? obj.material : [obj.material]).forEach((m) => m.dispose());
+      (Array.isArray(obj.material) ? obj.material : [obj.material]).forEach((m) => {
+        // Recoloured outfit textures are cached and shared between riders
+        if (m.userData.sharedMap) (m as THREE.MeshStandardMaterial).map = null;
+        m.dispose();
+      });
     }
   });
 }
