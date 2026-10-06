@@ -4,12 +4,15 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import mapboxgl from 'mapbox-gl';
 import { useGameStore } from '@/store/game';
-import { sfx } from '@/lib/game/sfx';
+import { getAudioPrefs, setAudioPrefs, sfx } from '@/lib/game/sfx';
+import { RideAudio } from '@/lib/game/rideAudio';
+import { Combo, TIER_CALLS, type StyleMove } from '@/lib/game/combo';
 import { createRunnerLayer } from './RunnerLayer';
 import { createCrewLayer } from './CrewLayer';
 import { ChaseCamera, createShockwave, createWake } from './runFx';
 import { createChaserLayer } from './ChaserLayer';
 import { TRAFFIC, createTrafficLayer, preloadTraffic, type TrafficKind } from './TrafficLayer';
+import { createFxLayer } from './FxLayer';
 import { CHASER, createChaseWorld, stepChase, whip, whipCooldown, type ChaseWorld } from './chaserAI';
 import { clearDistance, findOpenSpot, isBlocked, openHeading, resolveRider } from './collision';
 import { createBuildingSource } from './buildingSource';
@@ -46,6 +49,14 @@ const OB_MAX = 12;
 const OB_SPAWN_MS = 1000;
 const OB_DESPAWN_M = 650;
 const CAR_SPEED_MS: [number, number] = [8, 16];
+
+/* ── Style ── */
+const NEAR_MISS_M = 8;        // passing this close outside a vehicle's contact radius
+const NEAR_MISS_MIN_MS = 20;  // only counts at speed
+const NEAR_MISS_BONUS = 10;
+const SLOWMO_MS = 140;        // a beat of slow motion on a near-miss
+const SLOWMO_K = 0.35;
+const TIER_COLORS = ['#F0F6FF', '#00E096', '#00C2FF', '#FFB800', '#FF3D9A'];
 const CRASH_STUN_MS = 900;
 const CRASH_LOSS_PCT = 0.3;
 const BODA_RIDE_MS = 8000;    // boost duration after mounting a boda
@@ -69,7 +80,10 @@ function buzz(pattern: number | number[]) {
 }
 
 interface Coin { id: number; lng: number; lat: number }
-interface Obstacle { id: number; lng: number; lat: number; kind: TrafficKind; heading: number; speed: number }
+interface Obstacle {
+  id: number; lng: number; lat: number; kind: TrafficKind; heading: number; speed: number;
+  styled?: boolean; // already scored as a near-miss or a jump-over
+}
 
 function metersPerDegLng(lat: number) {
   return 111320 * Math.cos((lat * Math.PI) / 180);
@@ -116,6 +130,12 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
   const stickRingRef = useRef<HTMLDivElement>(null);
   const stickKnobRef = useRef<HTMLDivElement>(null);
   const radarRef = useRef<HTMLCanvasElement>(null);
+  const audioRef = useRef<RideAudio | null>(null);
+  const comboChipRef = useRef<HTMLDivElement>(null);
+  const comboTextRef = useRef<HTMLSpanElement>(null);
+  const comboBarRef = useRef<HTMLDivElement>(null);
+  const calloutRef = useRef<HTMLDivElement>(null);
+  const [audioPrefs, setPrefsState] = useState(getAudioPrefs);
   const speedRef = useRef(0);          // m/s
   const headingRef = useRef(0);        // rad, clockwise from north
   const yawRateRef = useRef(0);        // rad/s, smoothed — sent so others can dead-reckon our arc
@@ -143,6 +163,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
   const setPause = useCallback((on: boolean) => {
     pausedRef.current = on;
     setPaused(on);
+    if (on) audioRef.current?.pause(); else audioRef.current?.resume();
     thumbRef.current.reset();
     keysRef.current = { up: false, down: false, left: false, right: false };
   }, []);
@@ -360,6 +381,12 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     const wake = createWake(map, player.avatar_color);
     const shock = createShockwave(map, CHASER.WHIP_RANGE_M, CHASER.WHIP_HALF_ANGLE);
 
+    /* ── Style: combo meter, ride audio, slow-mo ── */
+    const combo = new Combo();
+    const audio = new RideAudio();
+    audioRef.current = audio;
+    let slowUntil = 0;
+
     /* ── Traffic ── */
     preloadTraffic();
     const traffic = createTrafficLayer('run-traffic');
@@ -419,6 +446,13 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       }
       setCrashCount((c) => c + 1);
       buzz(70);
+      const here = toLocal(posRef.current);
+      fx.dust(here.x, here.y, 1.4);
+      if (combo.bust() >= 2) {
+        sfx.comboBust();
+        callout('COMBO LOST', '#FF4757');
+      }
+      audio.setTier(1);
     };
 
     /* ── Rival crew ── */
@@ -433,6 +467,10 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     });
     let attackUntil = 0;
     let lastJumpH = 0;
+
+    /* ── Particles: sparks, dust, bursts ── */
+    const fx = createFxLayer('run-fx', origin);
+    if (!map.getLayer('run-fx')) map.addLayer(fx);
 
     /* ── Buildings: solid walls from the live map ── */
     const buildings = createBuildingSource(map, toLocal);
@@ -491,6 +529,29 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       runTideRef.current += amount;
       setRunTide(runTideRef.current);
     };
+    /** Bank a reward at the current combo multiplier; returns what was paid. */
+    const earn = (base: number) => {
+      const amount = base * combo.mult;
+      bank(amount);
+      return amount;
+    };
+    const callout = (text: string, color: string) => {
+      const el = calloutRef.current;
+      if (!el) return;
+      el.textContent = text;
+      el.style.color = color;
+      el.classList.remove('surf-pop-go');
+      void el.offsetWidth;
+      el.classList.add('surf-pop-go');
+    };
+    const styleMove = (move: StyleMove) => {
+      const up = combo.add(move);
+      if (up === null) return;
+      sfx.comboUp(up);
+      audio.setTier(up);
+      buzz(15);
+      callout(`×${up} ${TIER_CALLS[up - 1]}`, TIER_COLORS[up - 1]);
+    };
     const view = () => {
       const l = toLocal(posRef.current);
       return { x: l.x, y: l.y, heading: headingRef.current, speed: speedRef.current, jump: lastJumpH };
@@ -508,8 +569,10 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         buzz([18, 30, 18]);
         sfx.roundWin();
         chase.addTrauma(0.25);
-        bank(CHASER.BOUNTY * hits.length);
-        pop(`+${CHASER.BOUNTY * hits.length} KNOCKED OFF${hits.length > 1 ? ` ×${hits.length}` : ''}`, '#FFD84D');
+        for (const c of world.chasers) if (hits.includes(c.id)) fx.burst(c.x, c.y, 3, '#FF4757', 22);
+        styleMove('whipHit');
+        const paid = earn(CHASER.BOUNTY * hits.length);
+        pop(`+${paid} KNOCKED OFF${hits.length > 1 ? ` ×${hits.length}` : ''}`, '#FFD84D');
       }
     };
 
@@ -529,7 +592,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       }
       e.preventDefault();
     };
-    const onDown = (e: KeyboardEvent) => setKey(e, true);
+    const onDown = (e: KeyboardEvent) => { sfx.unlock(); setKey(e, true); };
     const onUp = (e: KeyboardEvent) => setKey(e, false);
     window.addEventListener('keydown', onDown);
     window.addEventListener('keyup', onUp);
@@ -595,7 +658,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
     let prevJumpH = 0;
 
     const tick = (ts: number) => {
-      const dt = Math.min((ts - lastTs) / 1000, 0.05);
+      const dt = Math.min((ts - lastTs) / 1000, 0.05) * (ts < slowUntil ? SLOWMO_K : 1);
       lastTs = ts;
       if (pausedRef.current) {
         raf = requestAnimationFrame(tick);
@@ -660,6 +723,10 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
             p.lat = ll.lat;
             headingRef.current = r.heading;
             speedRef.current = r.speed;
+            // Sparks fly off the wall the rider was pushed out of
+            const nlen = Math.hypot(r.x - here.x, r.y - here.y) || 1;
+            const nx = (r.x - here.x) / nlen, ny = (r.y - here.y) / nlen;
+            if (r.crash || ts - lastScrapeMs > 90) fx.sparks(r.x - nx * 3, r.y - ny * 3, nx, ny, r.heading, r.crash ? r.impact : r.speed);
             if (r.crash && ts >= stunUntilRef.current) {
               // The board rides itself, so bounce off pointing down open road —
               // otherwise auto-cruise would grind you straight back into the wall
@@ -669,7 +736,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
             } else if (r.scrape && ts - lastScrapeMs > 250) {
               lastScrapeMs = ts;
               chase.addTrauma(0.12);
-              sfx.miss();
+              sfx.scrape();
             }
           }
         }
@@ -681,9 +748,10 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         );
         const grabbed = before - coinsRef.current.length;
         if (grabbed > 0) {
-          sfx.hit(grabbed);
-          runTideRef.current += grabbed * COIN_VALUE;
-          setRunTide(runTideRef.current);
+          sfx.hit(combo.mult + grabbed);
+          for (let i = 0; i < grabbed; i++) { styleMove('coin'); earn(COIN_VALUE); }
+          const me = toLocal(p);
+          fx.burst(me.x, me.y, 4, '#FFD84D', 10 + 6 * grabbed);
           syncCoins();
           if (coinsRef.current.length === 0) spawnCoins();
         }
@@ -707,8 +775,33 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
               bodaUntilRef.current = ts + BODA_RIDE_MS;
               sfx.roundWin();
               chase.addTrauma(0.2);
+              styleMove('boda');
+              const me = toLocal(p);
+              fx.burst(me.x, me.y, 2, '#00E096', 20);
             } else {
               takeHit(ts, 0.7);
+            }
+          }
+        }
+
+        // Style: threading past traffic at speed, or sailing right over it
+        if (speedRef.current > NEAR_MISS_MIN_MS) {
+          for (const o of obstaclesRef.current) {
+            if (o.styled) continue;
+            const d = distM(o.lng, o.lat, p.lng, p.lat);
+            const r = TRAFFIC[o.kind].radiusM;
+            if (jumpH >= OB_CLEAR_JUMP_M && d <= r) {
+              o.styled = true;
+              styleMove('jumpOver');
+              const paid = earn(NEAR_MISS_BONUS * 2);
+              pop(`+${paid} OVER THE TOP`, '#00E096');
+            } else if (jumpH < OB_CLEAR_JUMP_M && d > r && d <= r + NEAR_MISS_M) {
+              o.styled = true;
+              styleMove('nearMiss');
+              const paid = earn(NEAR_MISS_BONUS);
+              sfx.nearMiss();
+              slowUntil = ts + SLOWMO_MS;
+              pop(`+${paid} CLOSE ONE`, '#F0F6FF');
             }
           }
         }
@@ -772,16 +865,16 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
           pop('GRABBED — −30% RUN TIDE', '#FF4757');
         } else if (ev.type === 'dodged') {
           sfx.hit(2);
-          bank(CHASER.DODGE_BONUS);
-          pop(`+${CHASER.DODGE_BONUS} SAILED OVER`, '#00E096');
+          styleMove('jumpOver');
+          pop(`+${earn(CHASER.DODGE_BONUS)} SAILED OVER`, '#00E096');
         } else if (ev.type === 'wipeout') {
           buzz(25);
           sfx.roundWin();
-          bank(CHASER.WIPEOUT_BONUS);
-          pop(`+${CHASER.WIPEOUT_BONUS} WIPEOUT`, '#FFD84D');
+          styleMove('wipeout');
+          pop(`+${earn(CHASER.WIPEOUT_BONUS)} WIPEOUT`, '#FFD84D');
         } else if (ev.type === 'escaped') {
-          bank(CHASER.ESCAPE_BONUS);
-          pop(`+${CHASER.ESCAPE_BONUS} SHOOK THEM OFF`, '#00C2FF');
+          styleMove('escape');
+          pop(`+${earn(CHASER.ESCAPE_BONUS)} SHOOK THEM OFF`, '#00C2FF');
         }
       }
       chasers.setChasers(world.chasers.map((c) => ({
@@ -822,11 +915,28 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
 
       /* ── Chase camera + speed FX. Runs every frame so it keeps settling at rest. ── */
       // A hard landing kicks the camera
-      if (prevJumpH > 2 && jumpH === 0) chase.addTrauma(0.35);
+      if (prevJumpH > 2 && jumpH === 0) {
+        chase.addTrauma(0.35);
+        const me = toLocal(p);
+        fx.dust(me.x, me.y);
+        sfx.land();
+      }
       prevJumpH = jumpH;
       if (onBoda && moving) chase.rumble(0.16 * Math.min(speed01, 1));
       chase.update(map, p, headingRef.current, speed01, jumpH, dt, ts / 1000);
       if (governor.frame(dt)) applyQuality(governor.settings);
+      const dropped = combo.tick(dt);
+      if (dropped !== null) audio.setTier(dropped);
+      audio.update(speed01, onBoda, jumpH > 0.5);
+      if (frame % 3 === 0 && comboChipRef.current && comboTextRef.current && comboBarRef.current) {
+        const tier = combo.mult;
+        comboTextRef.current.textContent = `×${tier}`;
+        comboChipRef.current.style.borderColor = TIER_COLORS[tier - 1];
+        comboTextRef.current.style.color = TIER_COLORS[tier - 1];
+        comboBarRef.current.style.width = `${Math.round(combo.progress * 100)}%`;
+        comboBarRef.current.style.background = TIER_COLORS[Math.min(tier, 4)];
+        comboChipRef.current.style.opacity = combo.heat > 0 ? '1' : '0.55';
+      }
       if (frame % wakeEvery === 0) wake.push(p, moving ? speed01 : 0);
       shock.update(ts);
       if (frame % 4 === 0 && speedFxRef.current) {
@@ -888,6 +998,9 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
       window.removeEventListener('keydown', onDown);
       window.removeEventListener('keyup', onUp);
       document.removeEventListener('visibilitychange', onVis);
+      audio.stop();
+      audioRef.current = null;
+      if (map.getLayer('run-fx')) map.removeLayer('run-fx');
       chase.setClearance(null);
       remoteTags.forEach((t) => t.remove());
       remoteTags.clear();
@@ -941,6 +1054,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
   };
   const touchDown = (e: React.PointerEvent) => {
     if (pausedRef.current) return;
+    sfx.unlock(); // phones only start audio from a touch
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     thumbRef.current.down(e.pointerId, e.clientX, e.clientY, e.timeStamp);
     if (showHints) dismissHints();
@@ -996,6 +1110,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
           text-shadow: 0 2px 10px rgba(0,0,0,0.8); pointer-events:none; opacity:0;
         }
         .surf-pop-go { animation: surf-pop 1.3s ease-out forwards; }
+        .surf-callout { top: 21%; font-size: 40px; letter-spacing: 0.12em; }
         @keyframes surf-pop {
           0% { opacity:0; transform:translate(-50%,-30%) scale(0.7); }
           12% { opacity:1; transform:translate(-50%,-50%) scale(1.12); }
@@ -1098,6 +1213,12 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
             </span>
           </div>
           <div className="flex items-center gap-2">
+            {/* Combo: multiplier and progress to the next tier (driven from the game loop) */}
+            <div ref={comboChipRef} className="relative overflow-hidden rounded-full flex items-center px-2 py-[2px]"
+              style={{ background: 'rgba(9,13,24,0.88)', border: '1.5px solid #F0F6FF', opacity: 0.55, minWidth: 44 }}>
+              <div ref={comboBarRef} className="absolute left-0 bottom-0 h-[3px]" style={{ width: '0%', background: '#00E096' }} />
+              <span ref={comboTextRef} style={{ fontFamily: 'var(--font-arcade)', fontSize: '13px', letterSpacing: '0.08em', color: '#F0F6FF', lineHeight: 1.2 }}>×1</span>
+            </div>
             {/* Whip charge: fills as the cooldown recovers */}
             <div ref={whipBtnRef} className="rounded-full p-[2px]" style={{ background: 'rgba(255,71,87,0.85)' }}>
               <div className="rounded-full px-2 py-[3px]" style={{ background: 'rgba(9,13,24,0.88)' }}>
@@ -1122,6 +1243,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
         <div key={i} ref={(el) => { threatRefs.current[i] = el; }} className="surf-threat"><span /></div>
       ))}
       <div ref={popRef} className="surf-pop" />
+      <div ref={calloutRef} className="surf-pop surf-callout" />
 
       {/* First-ride hints */}
       <AnimatePresence>
@@ -1150,7 +1272,7 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
               ← → STEER · ↑ PUSH · ↓ BRAKE · SPACE JUMP · F WHIP · R FIND ME · ESC PAUSE
             </p>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.2em', color: 'rgba(240,246,255,0.7)', textShadow: '0 1px 6px rgba(0,0,0,0.8)' }}>
-              THE BOARD RIDES ITSELF — JUST STEER
+              BOARD RIDES ITSELF · SKIM TRAFFIC FOR COMBOS
             </span>
           </motion.div>
         )}
@@ -1184,6 +1306,20 @@ export function SurfRun({ map, onExit }: { map: mapboxgl.Map; onExit: () => void
                 style={{ borderRadius: 12, border: '1px solid rgba(0,194,255,0.35)', fontFamily: 'var(--font-arcade)', fontSize: '15px', letterSpacing: '0.14em', color: '#00C2FF' }}>
                 ⌖ FIND ME
               </button>
+              <div className="flex gap-2">
+                {([['sound', 'SOUND'], ['music', 'MUSIC']] as const).map(([key, label]) => (
+                  <button key={key} aria-pressed={audioPrefs[key]} aria-label={`${label.toLowerCase()} ${audioPrefs[key] ? 'on' : 'off'}`}
+                    onClick={() => { setAudioPrefs({ [key]: !audioPrefs[key] }); setPrefsState(getAudioPrefs()); }}
+                    className="flex-1 py-2.5"
+                    style={{
+                      borderRadius: 12, fontFamily: 'var(--font-arcade)', fontSize: '14px', letterSpacing: '0.12em',
+                      border: `1px solid ${audioPrefs[key] ? 'rgba(0,224,150,0.5)' : 'rgba(240,246,255,0.16)'}`,
+                      color: audioPrefs[key] ? '#00E096' : '#5C6F86',
+                    }}>
+                    {label} {audioPrefs[key] ? 'ON' : 'OFF'}
+                  </button>
+                ))}
+              </div>
               <button onClick={endRun} aria-label="End ride and open the map"
                 className="w-full py-3"
                 style={{ borderRadius: 12, border: '1px solid rgba(240,246,255,0.16)', fontFamily: 'var(--font-arcade)', fontSize: '15px', letterSpacing: '0.14em', color: '#8BA3BE' }}>
