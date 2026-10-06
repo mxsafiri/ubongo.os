@@ -2,8 +2,20 @@
 
 // Synthesized game audio — zero audio files, pure WebAudio.
 // All gains kept low; every call is fire-and-forget and safe on the server.
+//
+// Two buses — effects and music — meet in a gentle compressor, so stacking
+// sounds can't clip. The player can switch either off; that choice is kept.
 
 let ctx: AudioContext | null = null;
+let fxBus: GainNode | null = null;
+let musicBus: GainNode | null = null;
+
+const PREFS_KEY = 'surfari-audio';
+export interface AudioPrefs { sound: boolean; music: boolean }
+let prefs: AudioPrefs = { sound: true, music: true };
+try {
+  if (typeof window !== 'undefined') prefs = { ...prefs, ...JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}') };
+} catch { /* defaults */ }
 
 function ac(): AudioContext | null {
   if (typeof window === 'undefined') return null;
@@ -12,9 +24,40 @@ function ac(): AudioContext | null {
       (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AC) return null;
     ctx = new AC();
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -14;
+    comp.ratio.value = 4;
+    comp.connect(ctx.destination);
+    fxBus = ctx.createGain();
+    musicBus = ctx.createGain();
+    fxBus.connect(comp);
+    musicBus.connect(comp);
+    applyPrefs();
   }
   if (ctx.state === 'suspended') void ctx.resume();
   return ctx;
+}
+
+function applyPrefs() {
+  if (!ctx || !fxBus || !musicBus) return;
+  fxBus.gain.setTargetAtTime(prefs.sound ? 1 : 0, ctx.currentTime, 0.05);
+  musicBus.gain.setTargetAtTime(prefs.sound && prefs.music ? 0.8 : 0, ctx.currentTime, 0.05);
+}
+
+/** The shared context and buses, for the continuous ride audio. */
+export function audioGraph() {
+  const c = ac();
+  return c && fxBus && musicBus ? { ctx: c, fx: fxBus, music: musicBus } : null;
+}
+
+export function getAudioPrefs(): AudioPrefs {
+  return { ...prefs };
+}
+
+export function setAudioPrefs(next: Partial<AudioPrefs>) {
+  prefs = { ...prefs, ...next };
+  try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* private mode */ }
+  applyPrefs();
 }
 
 function tone(
@@ -36,12 +79,12 @@ function tone(
   g.gain.setValueAtTime(0.0001, t0);
   g.gain.exponentialRampToValueAtTime(gain, t0 + 0.012);
   g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-  osc.connect(g).connect(c.destination);
+  osc.connect(g).connect(fxBus ?? c.destination);
   osc.start(t0);
   osc.stop(t0 + dur + 0.05);
 }
 
-function noise(dur = 0.25, gain = 0.14, delay = 0) {
+function noise(dur = 0.25, gain = 0.14, delay = 0, filter: BiquadFilterType = 'lowpass', freq = 900) {
   const c = ac();
   if (!c) return;
   const t0 = c.currentTime + delay;
@@ -53,11 +96,11 @@ function noise(dur = 0.25, gain = 0.14, delay = 0) {
   const src = c.createBufferSource();
   src.buffer = buf;
   const f = c.createBiquadFilter();
-  f.type = 'lowpass';
-  f.frequency.value = 900;
+  f.type = filter;
+  f.frequency.value = freq;
   const g = c.createGain();
   g.gain.setValueAtTime(gain, t0);
-  src.connect(f).connect(g).connect(c.destination);
+  src.connect(f).connect(g).connect(fxBus ?? c.destination);
   src.start(t0);
 }
 
@@ -93,6 +136,17 @@ export const sfx = {
   // Zone Flood
   pop() { tone(760, 0.06, 'sine', 0.09, 0, 1500); },
   aiMove() { tone(230, 0.09, 'sine', 0.05, 0, 180); },
+
+  // Surf Run style
+  nearMiss() { noise(0.22, 0.12, 0, 'bandpass', 1800); tone(900, 0.16, 'sine', 0.04, 0, 1800); },
+  comboUp(tier: number) {
+    const base = 392 * Math.pow(1.122, tier); // up a whole tone per tier
+    [1, 1.26, 1.5, 2].forEach((k, i) => tone(base * k, 0.11, 'triangle', 0.08, i * 0.06));
+  },
+  comboBust() { tone(330, 0.3, 'sawtooth', 0.06, 0, 110); },
+  land() { tone(90, 0.14, 'sine', 0.14, 0, 45); noise(0.12, 0.08, 0, 'lowpass', 500); },
+  scrape() { noise(0.18, 0.09, 0, 'highpass', 2600); },
+  horn() { tone(415, 0.16, 'square', 0.03); tone(523, 0.22, 'square', 0.03, 0.18); },
 
   // Stingers
   win() { [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, i === 3 ? 0.42 : 0.14, 'triangle', 0.12, i * 0.11)); },
