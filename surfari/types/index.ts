@@ -24,7 +24,8 @@ export type ChallengeType =
 
 export type GamePhase = 'loading' | 'onboarding' | 'tagging' | 'exploring' | 'surfing' | 'challenge' | 'result';
 
-export type GameTab = 'map' | 'surf' | 'explore' | 'tasks' | 'profile';
+// Nav tabs, plus 'surf' (turf detail) and the retired 'explore'/'tasks' screens
+export type GameTab = 'map' | 'work' | 'places' | 'team' | 'profile' | 'surf' | 'explore' | 'tasks';
 
 export type StakeTier = 'ripple' | 'current' | 'wave' | 'apex_tide';
 

@@ -1,21 +1,24 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Waves, Bell, Map, Zap, ListChecks, User, Sun, Moon, Radio, Crosshair, Flag, ChevronsRight } from 'lucide-react';
+import { Waves, Bell, Map, Briefcase, MapPin, Users, User, Sun, Moon, Radio, Crosshair, Flag, ChevronsRight } from 'lucide-react';
 import { useGameStore, selectPlayer, selectActiveTab, selectTheme, selectUnreadCount, selectSelectedZone, selectNearbyZones } from '@/store/game';
 import { formatTokens } from '@/lib/utils';
 import { SurfScreen } from '@/components/screens/SurfScreen';
 import { ExploreScreen } from '@/components/screens/ExploreScreen';
 import { TasksScreen } from '@/components/screens/TasksScreen';
 import { ProfileScreen } from '@/components/screens/ProfileScreen';
+import { WorkScreen } from '@/components/screens/WorkScreen';
+import { PlacesScreen } from '@/components/screens/PlacesScreen';
+import { TeamScreen } from '@/components/screens/TeamScreen';
 import { ZoneChat } from '@/components/chat/ZoneChat';
 import type { GameTab, Zone } from '@/types';
 
 const TABS: { tab: GameTab; icon: React.ReactNode; label: string }[] = [
   { tab: 'map',     icon: <Map size={15} />,        label: 'INTEL' },
-  { tab: 'surf',    icon: <Zap size={15} />,        label: 'SURF' },
-  { tab: 'explore', icon: <Waves size={15} />,      label: 'EXPLORE' },
-  { tab: 'tasks',   icon: <ListChecks size={15} />, label: 'OPS' },
+  { tab: 'work',    icon: <Briefcase size={15} />,  label: 'WORK' },
+  { tab: 'places',  icon: <MapPin size={15} />,     label: 'PLACES' },
+  { tab: 'team',    icon: <Users size={15} />,      label: 'TEAM' },
   { tab: 'profile', icon: <User size={15} />,       label: 'PROFILE' },
 ];
 
@@ -159,6 +162,9 @@ export function DesktopSidebar() {
           {activeTab === 'surf'    && <SurfScreen key="surf" />}
           {activeTab === 'explore' && <ExploreScreen key="explore" />}
           {activeTab === 'tasks'   && <TasksScreen key="tasks" />}
+          {activeTab === 'work'    && <WorkScreen key="work" />}
+          {activeTab === 'places'  && <PlacesScreen key="places" />}
+          {activeTab === 'team'    && <TeamScreen key="team" />}
           {activeTab === 'profile' && <ProfileScreen key="profile" />}
         </AnimatePresence>
       </div>

@@ -1,7 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Waves, Bell, Map, Zap, ListChecks, User, Sun, Moon } from 'lucide-react';
+import { Waves, Bell, Map, Briefcase, MapPin, Users, User, Sun, Moon } from 'lucide-react';
 import { useGameStore, selectPlayer, selectUnreadCount, selectActiveTab, selectTheme } from '@/store/game';
 import { formatTokens } from '@/lib/utils';
 import type { GameTab } from '@/types';
@@ -126,41 +126,35 @@ export default function HUD() {
       >
         <div className="flex items-end justify-around px-4">
           <NavBtn icon={<Map size={20} />} label="Map" tab="map" activeTab={activeTab} onPress={setActiveTab} />
-          <NavBtn icon={<Zap size={20} />} label="Surf" tab="surf" activeTab={activeTab} onPress={setActiveTab} />
+          <NavBtn icon={<Briefcase size={20} />} label="Work" tab="work" activeTab={activeTab} onPress={setActiveTab} />
 
-          {/* Centre explore pulse */}
-          <button className="flex flex-col items-center gap-1 pb-1" onClick={() => setActiveTab('explore')}>
+          {/* Centre: places to go */}
+          <button className="flex flex-col items-center gap-1 pb-1" onClick={() => setActiveTab('places')} aria-label="Places">
             <div
               className="relative w-14 h-14 rounded-full flex items-center justify-center"
               style={{
-                background: activeTab === 'explore'
+                background: activeTab === 'places'
                   ? 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-accent) 100%)'
                   : 'linear-gradient(135deg, rgba(0,153,194,0.85) 0%, rgba(109,40,217,0.85) 100%)',
-                boxShadow: activeTab === 'explore'
+                boxShadow: activeTab === 'places'
                   ? '0 0 28px rgba(0,153,194,0.4), 0 0 56px rgba(109,40,217,0.2)'
                   : '0 0 20px rgba(0,153,194,0.25), 0 0 40px rgba(109,40,217,0.12)',
                 transition: 'all 0.25s ease',
               }}
             >
-              <Waves size={22} style={{ color: '#fff' }} />
-              {activeTab !== 'explore' && (
-                <span
-                  className="absolute inset-0 rounded-full animate-ping"
-                  style={{ background: 'rgba(0,153,194,0.15)', animationDuration: '2.4s' }}
-                />
-              )}
+              <MapPin size={22} style={{ color: '#fff' }} />
             </div>
             <span style={{
               fontSize: '10px',
-              color: activeTab === 'explore' ? 'var(--color-primary)' : 'var(--text-muted)',
+              color: activeTab === 'places' ? 'var(--color-primary)' : 'var(--text-muted)',
               fontFamily: 'var(--font-mono)',
               letterSpacing: '0.08em',
             }}>
-              EXPLORE
+              PLACES
             </span>
           </button>
 
-          <NavBtn icon={<ListChecks size={20} />} label="Tasks" tab="tasks" activeTab={activeTab} onPress={setActiveTab} />
+          <NavBtn icon={<Users size={20} />} label="Team" tab="team" activeTab={activeTab} onPress={setActiveTab} />
           <NavBtn icon={<User size={20} />} label="Profile" tab="profile" activeTab={activeTab} onPress={setActiveTab} />
         </div>
       </motion.div>

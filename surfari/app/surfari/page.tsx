@@ -17,6 +17,12 @@ import { SurfScreen } from '@/components/screens/SurfScreen';
 import { ExploreScreen } from '@/components/screens/ExploreScreen';
 import { TasksScreen } from '@/components/screens/TasksScreen';
 import { ProfileScreen } from '@/components/screens/ProfileScreen';
+import { WorkScreen } from '@/components/screens/WorkScreen';
+import { PlacesScreen } from '@/components/screens/PlacesScreen';
+import { TeamScreen } from '@/components/screens/TeamScreen';
+import { PlaceCard } from '@/components/life/PlaceCard';
+import { TravelBanner } from '@/components/life/TravelBanner';
+import { WorkPanel } from '@/components/life/WorkPanel';
 
 const CityMap = dynamic(() => import('@/components/map/CityMap'), { ssr: false });
 
@@ -33,6 +39,8 @@ export default function SurfariPage() {
   const unread = useGameStore(selectUnreadCount);
   const setSidebarCollapsed = useGameStore((s) => s.setSidebarCollapsed);
   const riding = useGameStore(selectRiding);
+  const onShift = useGameStore((s) => !!s.life.shift);
+  const loadWork = useGameStore((s) => s.loadWork);
   const isDesktop = useIsDesktop();
 
   // Restore session from localStorage on first mount (uses player_id — PIN not required)
@@ -70,10 +78,13 @@ export default function SurfariPage() {
     }
   }, [mapLoaded, phase, setPhase]);
 
-  // Fetch live zone data from DB when the player enters exploring
+  // Fetch live zone data and any shift in progress when the player enters exploring
   useEffect(() => {
-    if (phase === 'exploring') fetchZones();
-  }, [phase, fetchZones]);
+    if (phase === 'exploring') {
+      fetchZones();
+      void loadWork();
+    }
+  }, [phase, fetchZones, loadWork]);
 
   const showHUD = phase === 'exploring' || phase === 'surfing' || phase === 'challenge' || phase === 'result';
   // Cruise Mode: while riding, the ride is the whole screen — menus come back on pause
@@ -99,6 +110,18 @@ export default function SurfariPage() {
   }, [phase, setPhase]);
 
   const mapActive = !isDesktop && (riding || activeTab === 'map' || activeTab === 'explore');
+  // Life overlays on the map: place card, trip banner, the live shift
+  const lifeOverlays = (showWorkPanel: boolean) => showMenus && (
+    <>
+      <PlaceCard />
+      <TravelBanner />
+      {showWorkPanel && onShift && (
+        <div className="absolute z-[24] left-3 right-3 lg:right-auto lg:w-[380px]" style={{ top: 'calc(var(--screen-pad-top, 16px) + 52px)' }}>
+          <WorkPanel compact />
+        </div>
+      )}
+    </>
+  );
 
   /* ── Desktop layout ── */
   if (isDesktop) {
@@ -124,6 +147,7 @@ export default function SurfariPage() {
           )}
           {phase === 'onboarding' && <Onboarding />}
           {showMenus && <PlantFlow />}
+          {lifeOverlays(activeTab !== 'work')}
           {!riding && <Toast />}
 
           {/* Re-open HUD when collapsed — floating button over the map */}
@@ -197,11 +221,15 @@ export default function SurfariPage() {
           {activeTab === 'surf'    && <SurfScreen key="surf" />}
           {activeTab === 'explore' && <ExploreScreen key="explore" />}
           {activeTab === 'tasks'   && <TasksScreen key="tasks" />}
+          {activeTab === 'work'    && <WorkScreen key="work" />}
+          {activeTab === 'places'  && <PlacesScreen key="places" />}
+          {activeTab === 'team'    && <TeamScreen key="team" />}
           {activeTab === 'profile' && <ProfileScreen key="profile" />}
         </AnimatePresence>
       )}
 
       {showMenus && <PlantFlow />}
+      {activeTab === 'map' && lifeOverlays(true)}
       {showMenus && <CityChat />}
       {showMenus && <Toast />}
       {showMenus && <HUD />}

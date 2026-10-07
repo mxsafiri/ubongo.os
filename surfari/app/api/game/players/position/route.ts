@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
           geo_heading = ${num(heading, -10, 10)},
           geo_speed = ${num(speed, 0, 200)},
           geo_turn = ${num(turn, -5, 5)},
-          geo_mode = ${mode === 'boda' ? 'boda' : 'board'},
+          geo_mode = ${mode === 'boda' || mode === 'foot' ? mode : 'board'},
           last_active = NOW()
       WHERE id = ${player_id}
     `;

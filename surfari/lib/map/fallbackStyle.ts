@@ -63,7 +63,11 @@ export function fallbackStyle(): StyleSpecification {
     // Text needs a glyphs URL to validate; offline the fonts 404 and labels go blank
     glyphs: '/fonts/{fontstack}/{range}.pbf',
     sources: {
-      'fallback-city': { type: 'geojson', data: cityBlocks(DEFAULT_VIEW.longitude, DEFAULT_VIEW.latitude) },
+      // Two patches: the default view and the Kariakoo–Posta core where life mode starts
+      'fallback-city': { type: 'geojson', data: {
+        type: 'FeatureCollection',
+        features: [...cityBlocks(DEFAULT_VIEW.longitude, DEFAULT_VIEW.latitude).features, ...cityBlocks(39.281, -6.817).features],
+      } },
     },
     layers: [
       { id: 'ground', type: 'background', paint: { 'background-color': '#3A4152' } },

@@ -10,6 +10,31 @@ import type {
   MapViewState,
 } from '@/types';
 import { DEFAULT_VIEW } from '@/lib/map/style';
+import type { TaskId } from '@/lib/game/work';
+
+export type TravelMode = 'walk' | 'boda';
+
+/** A shift as the server reports it (times in ms, server clock). */
+export interface ShiftView {
+  id: string;
+  placeId: string;
+  jobId: string;
+  startedAt: number;
+  endsAt: number;
+  perf: number;
+  goodDone: number;
+  lastUsed: Partial<Record<TaskId, number>>;
+}
+
+export interface LifeState {
+  pos: { lng: number; lat: number } | null;  // where your character stands
+  hereId: string | null;                      // the place you're at, if any
+  selectedPlaceId: string | null;              // place card open
+  travel: { placeId: string; mode: TravelMode; status: 'requested' | 'moving'; etaS?: number; skip?: boolean } | null;
+  shift: ShiftView | null;
+  xp: Record<string, number>;                  // finished shifts per job
+  clockSkewMs: number;                         // server − client
+}
 
 interface GameStore {
   // State
@@ -27,6 +52,7 @@ interface GameStore {
   plant_site: { lng: number; lat: number } | null;
   sidebarCollapsed: boolean;
   riding: boolean;              // Cruise Mode: the ride owns the whole screen
+  life: LifeState;
 
   // Actions
   setPhase: (phase: GamePhase) => void;
@@ -56,6 +82,13 @@ interface GameStore {
   buildZone: (zoneId: string) => Promise<boolean>;
   setSidebarCollapsed: (collapsed: boolean) => void;
   setRiding: (riding: boolean) => void;
+  setLife: (patch: Partial<LifeState>) => void;
+  selectPlace: (placeId: string | null) => void;
+  requestTravel: (placeId: string, mode: TravelMode) => void;
+  loadWork: () => Promise<void>;
+  startShift: (jobId: string) => Promise<string | null>;
+  doWorkTask: (task: TaskId) => Promise<string | null>;
+  finishShift: () => Promise<{ payout: number } | { error: string }>;
 }
 
 export const useGameStore = create<GameStore>()(
@@ -74,6 +107,7 @@ export const useGameStore = create<GameStore>()(
     plant_site: null,
     sidebarCollapsed: false,
     riding: false,
+    life: { pos: null, hereId: null, selectedPlaceId: null, travel: null, shift: null, xp: {}, clockSkewMs: 0 },
 
     setPhase: (phase) => set({ phase }),
 
@@ -260,6 +294,56 @@ export const useGameStore = create<GameStore>()(
     setSidebarCollapsed: (sidebarCollapsed) => set({ sidebarCollapsed }),
 
     // Riding always happens on the map tab, with nothing else on screen
+    setLife: (patch) => set((st) => ({ life: { ...st.life, ...patch } })),
+
+    selectPlace: (placeId) => set((st) => ({ life: { ...st.life, selectedPlaceId: placeId } })),
+
+    requestTravel: (placeId, mode) => set((st) => ({
+      life: { ...st.life, travel: { placeId, mode, status: 'requested' }, selectedPlaceId: null },
+    })),
+
+    // Work: the server owns shifts; these keep the local copy in step
+    loadWork: async () => {
+      const { player } = get();
+      if (!player) return;
+      try {
+        const res = await fetch(`/api/game/work?player_id=${player.id}`);
+        if (!res.ok) return;
+        const { shift, xp, now } = await res.json();
+        set((st) => ({ life: { ...st.life, shift, xp: xp ?? {}, clockSkewMs: typeof now === 'number' ? now - Date.now() : st.life.clockSkewMs } }));
+      } catch (err) {
+        console.error('loadWork', err);
+      }
+    },
+
+    startShift: async (jobId) => workCall(get, set, { action: 'start', job_id: jobId }),
+
+    doWorkTask: async (task) => workCall(get, set, { action: 'task', task }),
+
+    finishShift: async () => {
+      const { player } = get();
+      if (!player) return { error: 'Not signed in' };
+      try {
+        const res = await fetch('/api/game/work', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ player_id: player.id, action: 'finish' }),
+        });
+        const body = await res.json();
+        if (!res.ok) {
+          set((st) => ({ life: { ...st.life, shift: null } }));
+          return { error: body.error ?? 'Could not clock out' };
+        }
+        set((st) => ({
+          life: { ...st.life, shift: null, xp: body.xp ?? st.life.xp },
+          player: body.player && st.player ? { ...st.player, ...body.player, geo_lat: st.player.geo_lat, geo_lng: st.player.geo_lng } : st.player,
+        }));
+        return { payout: body.payout as number };
+      } catch {
+        return { error: 'Lost connection — try again' };
+      }
+    },
+
     setRiding: (riding) => set(riding ? { riding, activeTab: 'map', plant_site: null, selected_zone: null } : { riding }),
 
     buildZone: async (zoneId: string) => {
@@ -336,3 +420,27 @@ export const selectTheme = (s: GameStore) => s.theme;
 export const selectPlantSite = (s: GameStore) => s.plant_site;
 export const selectSidebarCollapsed = (s: GameStore) => s.sidebarCollapsed;
 export const selectRiding = (s: GameStore) => s.riding;
+
+type StoreSet = (fn: (st: GameStore) => Partial<GameStore>) => void;
+
+/** POST to the work route; on success store the returned shift. Returns an error message or null. */
+async function workCall(get: () => GameStore, set: StoreSet, body: Record<string, unknown>): Promise<string | null> {
+  const { player } = get();
+  if (!player) return 'Not signed in';
+  try {
+    const res = await fetch('/api/game/work', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ player_id: player.id, ...body }),
+    });
+    const data = await res.json();
+    if (data.shift !== undefined || typeof data.now === 'number') {
+      set((st) => ({ life: { ...st.life, shift: data.shift ?? st.life.shift, clockSkewMs: typeof data.now === 'number' ? data.now - Date.now() : st.life.clockSkewMs } }));
+    }
+    return res.ok ? null : (data.error ?? 'Request failed');
+  } catch {
+    return 'Lost connection — try again';
+  }
+}
+
+export const selectLife = (s: GameStore) => s.life;
