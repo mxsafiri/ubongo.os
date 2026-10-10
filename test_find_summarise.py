@@ -208,7 +208,7 @@ def test_read_file_tool(server, tmp_path):
     doc = make_docx(home / "Documents" / "lease.docx", "Rent: 450,000 TZS a month")
     ok = mod._read_file_tool({"path": "~/Documents/lease.docx"})
     assert ok.success and "Rent: 450,000 TZS a month" in ok.message
-    assert ok.message.startswith("File: lease.docx (~/Documents/lease.docx)")
+    assert ok.message.startswith(f"File: lease.docx ({os.path.join('~', 'Documents', 'lease.docx')})")
 
     (home / "Documents" / "big.txt").write_text("y" * 5000)
     cut = mod._read_file_tool({"path": str(home / "Documents" / "big.txt"), "max_chars": 1000})
