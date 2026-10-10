@@ -5,6 +5,21 @@ All notable changes to Ubongo OS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-10-10
+
+### Changed — No invite code needed
+
+New users press START and go straight into the app. Ubongo sets up their
+access automatically. The invite code screen is still there as a fallback
+for anyone who already has a code.
+
+### Fixed — File memory ships with the app
+
+The file index behind "find my files" (`assistant_cli/memory`) is now part
+of the repository, so fresh builds include it. On first launch it rebuilds
+the index from Desktop, Documents, Downloads and your other main folders,
+then keeps it up to date as files change.
+
 ## [0.5.11] - 2026-04-21
 
 ### Added — Voice push-to-talk on the orb
