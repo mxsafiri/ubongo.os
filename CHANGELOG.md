@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Write & reply
+
+Select a message in Mail, WhatsApp or anywhere, press ⌥Space and say
+"reply to this, say Friday works". Ubongo reads what you selected and shows
+a draft in your chosen tone, as an editable card with **Copy** and
+**Insert into WhatsApp**. Nothing is pasted until you click Insert.
+
+- Ubongo remembers which app you were in when you opened it.
+- New tools: `get_selected_text` (copies your selection and restores the
+  clipboard) and `show_draft` (the draft card).
+- Your assistant's name and tone from onboarding now shape every answer.
+- macOS asks once to allow ubongo under Privacy & Security → Accessibility,
+  so it can copy and paste for you.
+
 ### Added — Ubongo reads inside your documents
 
 Ask "what does my Kariakoo lease say about rent?" and Ubongo finds the

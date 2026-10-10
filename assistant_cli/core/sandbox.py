@@ -92,6 +92,11 @@ TOOL_RISK: Dict[str, RiskLevel] = {
     "memory_search":  RiskLevel.SAFE,
     "read_file":      RiskLevel.SAFE,
 
+    # write & reply: reading the selection and showing a draft change
+    # nothing; inserting a draft only happens when the user clicks Insert
+    "get_selected_text": RiskLevel.SAFE,
+    "show_draft":        RiskLevel.SAFE,
+
     # system probes
     "system_info":    RiskLevel.SAFE,
 

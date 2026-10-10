@@ -14,6 +14,29 @@ const SERVER_PORT: u16 = 8765;
 // ── Shared state ──────────────────────────────────────────────────────────
 struct AppState {
     server_pid: Option<u32>,
+    /// The app the user was in when they summoned ubongo, e.g. "Mail".
+    /// "Reply to this" reads from it and Insert pastes into it.
+    last_app: Option<String>,
+}
+
+type SharedState = Arc<Mutex<AppState>>;
+
+/// Name of the frontmost app, captured just before ubongo's window shows.
+fn frontmost_app() -> Option<String> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let out = Command::new("osascript")
+        .arg("-e")
+        .arg("tell application \"System Events\" to get name of first application process whose frontmost is true")
+        .output()
+        .ok()?;
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if name.is_empty() || name.eq_ignore_ascii_case("ubongo") {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -78,10 +101,40 @@ async fn query(message: String, history: Vec<serde_json::Value>) -> Result<serde
 
 /// Send an agentic query (returns tool calls + text).
 #[tauri::command]
-async fn query_agentic(message: String, history: Vec<serde_json::Value>) -> Result<serde_json::Value, String> {
+async fn query_agentic(
+    message: String,
+    history: Vec<serde_json::Value>,
+    profile: Option<serde_json::Value>,
+    state: tauri::State<'_, SharedState>,
+) -> Result<serde_json::Value, String> {
+    let context_app = state.lock().ok().and_then(|s| s.last_app.clone());
     let client = reqwest::Client::new();
-    let body = serde_json::json!({ "message": message, "history": history });
+    let body = serde_json::json!({
+        "message": message,
+        "history": history,
+        "profile": profile,
+        "context_app": context_app,
+    });
     api_request(&client, "POST", "/query/agentic", Some(body)).await
+}
+
+/// Copy a draft to the clipboard.
+#[tauri::command]
+async fn draft_copy(text: String) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::new();
+    api_request(&client, "POST", "/draft/copy", Some(serde_json::json!({ "text": text }))).await
+}
+
+/// Put a draft into the app the user was in. Hides ubongo first so that
+/// app can take focus.
+#[tauri::command]
+async fn draft_insert(app: AppHandle, text: String, target: String) -> Result<serde_json::Value, String> {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.hide();
+    }
+    let client = reqwest::Client::new();
+    let body = serde_json::json!({ "text": text, "app": target });
+    api_request(&client, "POST", "/draft/insert", Some(body)).await
 }
 
 /// Fetch current provider / usage status.
@@ -127,6 +180,13 @@ fn toggle_window(app: AppHandle) {
         if win.is_visible().unwrap_or(false) {
             let _ = win.hide();
         } else {
+            // Remember where the user was before ubongo takes focus
+            let current = frontmost_app();
+            if let Some(state) = app.try_state::<SharedState>() {
+                if let Ok(mut s) = state.lock() {
+                    s.last_app = current;
+                }
+            }
             let _ = win.show();
             let _ = win.set_focus();
             let _ = win.center();
@@ -266,7 +326,7 @@ fn register_shortcut(app: &tauri::App) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let state = Arc::new(Mutex::new(AppState { server_pid: None }));
+    let state: SharedState = Arc::new(Mutex::new(AppState { server_pid: None, last_app: None }));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -318,6 +378,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             query,
             query_agentic,
+            draft_copy,
+            draft_insert,
             get_status,
             onboarding_status,
             onboarding_activate,

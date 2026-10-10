@@ -23,6 +23,8 @@ async function getTauriInvoke(): Promise<InvokeFn> {
       const routes: Record<string, { method: string; path: string } | null> = {
         query: { method: "POST", path: "/query" },
         query_agentic: { method: "POST", path: "/query/agentic" },
+        draft_copy:    { method: "POST", path: "/draft/copy" },
+        draft_insert:  { method: "POST", path: "/draft/insert" },
         get_status: { method: "GET", path: "/status" },
         onboarding_status:   { method: "GET",  path: "/onboarding/status" },
         onboarding_activate: { method: "POST", path: "/onboarding/activate" },

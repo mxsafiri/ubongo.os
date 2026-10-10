@@ -59,7 +59,11 @@ Swahili, and it actually gets done on their Mac.
       (search → read → answer) that names the file it used
 - [ ] Find & summarise, step 2: search by meaning (embeddings), not only matching words; scanned PDFs (OCR)
 - [ ] Find & summarise, step 3: answers show the source file as a card you can open
-- [ ] Write & reply: drafts in the user's chosen tone; copy or insert into the frontmost app
+- [x] Write & reply, step 1: drafts in the user's name and tone, as an editable card;
+      "reply to this" reads the selection in the app you came from; Copy, or Insert into
+      that app only when you click it
+- [ ] Write & reply, step 2: reply in the thread's language and match the other person's register;
+      remember how the user signs off
 - [ ] Voice in Swahili and English, end to end
 - [ ] A CI test for each hero flow
 - [ ] Hide unfinished features from the UI

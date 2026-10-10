@@ -110,6 +110,13 @@ export interface FileItem {
   modified?: string;
 }
 
+export interface DraftInfo {
+  text: string;
+  title?: string;
+  /** App the user was in; Insert pastes there. */
+  app?: string | null;
+}
+
 export interface AppInfo {
   app_name: string;
   action: string;
@@ -146,6 +153,7 @@ export type ResponseCard =
   | { type: "search";     data: { query: string; items: SearchItem[] } }
   | { type: "file";       data: { items: FileItem[] } }
   | { type: "music";      data: MusicInfo }
+  | { type: "draft";      data: DraftInfo }
   | { type: "app";        data: AppInfo }
   | { type: "system";     data: { metrics: SystemMetric[] } }
   | { type: "markdown";   data: { content: string } }

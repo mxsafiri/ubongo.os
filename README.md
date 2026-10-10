@@ -31,6 +31,8 @@ laptop.
    app. If so, go to **System Settings → Privacy & Security → Open Anyway**, or
    run `xattr -dr com.apple.quarantine /Applications/ubongo.app` once.
 4. Pick a name and a tone, then press **START**. There's no sign-up and no invite code.
+5. The first time you use "reply to this" or **Insert**, macOS asks you to allow ubongo
+   under **Privacy & Security → Accessibility**, so it can copy and paste for you.
 
 ## How it works
 

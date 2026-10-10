@@ -13,6 +13,7 @@ import { AppCard } from "./cards/AppCard";
 import { SystemCard } from "./cards/SystemCard";
 import { MarkdownResponse } from "./cards/MarkdownResponse";
 import { ScreenshotCard } from "./cards/ScreenshotCard";
+import { DraftCard } from "./cards/DraftCard";
 
 interface Props {
   cards: ResponseCard[];
@@ -82,6 +83,8 @@ export function ResponseRenderer({ cards, fallbackText, model, onMusicAction, on
               );
             case "screenshot":
               return <ScreenshotCard key={i} info={card.data} />;
+            case "draft":
+              return <DraftCard key={i} info={card.data} />;
             default:
               return null;
           }

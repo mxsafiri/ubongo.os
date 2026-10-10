@@ -147,6 +147,8 @@ export default function App() {
         const result = await invoke<QueryResult>("query_agentic", {
           message,
           history: historyRef.current,
+          // Drafts are written as the assistant the user named, in their tone
+          profile: profile ? { agent_name: profile.agentName, tone: profile.tone } : null,
         });
 
         if (result?.detail) {

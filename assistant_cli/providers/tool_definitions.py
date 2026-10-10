@@ -310,6 +310,39 @@ UBONGO_TOOLS: List[Dict[str, Any]] = [
         },
     },
 
+    # ── WRITE & REPLY ───────────────────────────────────────────────
+    {
+        "name": "get_selected_text",
+        "description": (
+            "Get the text the user has selected in the app they were using "
+            "before opening ubongo (e.g. the email or WhatsApp message they "
+            "want to answer). Call this when they say 'reply to this', "
+            "'answer this', 'rewrite this', 'summarise this', and so on."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "show_draft",
+        "description": (
+            "Show a piece of writing you drafted for the user (a reply, "
+            "email, message, post or document text) as an editable card "
+            "with Copy and Insert buttons. ALWAYS use this for drafts "
+            "instead of putting the draft in your answer. The user decides "
+            "whether to insert it; never claim it was sent."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "The full draft, ready to send."},
+                "title": {
+                    "type": "string",
+                    "description": "A short label, e.g. 'Reply to Amina' or 'Email to the landlord'.",
+                },
+            },
+            "required": ["text"],
+        },
+    },
+
     # ── SEMANTIC MEMORY (cross-session facts) ───────────────────────
     {
         "name": "memory_recall",
@@ -721,6 +754,7 @@ def get_tools_for_tier(tier: str) -> List[Dict[str, Any]]:
     basic_tools = {
         "file_operation", "app_control", "system_info",
         "memory_search", "read_file", "memory_recall", "memory_save", "memory_forget",
+        "get_selected_text", "show_draft",
         "web_search", "screen_control", "load_skill", "sessions_spawn",
         "canvas_emit", "learning_suggest", "reflection_log",
         "cron_create", "cron_list", "cron_delete",
