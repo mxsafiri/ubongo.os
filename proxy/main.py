@@ -14,6 +14,7 @@ Deployment target: Fly.io (free tier is enough for beta scale).
 Endpoints:
   GET  /health              — liveness check
   POST /validate            — check an invite code, return remaining quota
+  POST /provision           — issue a signed code to a new install (no invite needed)
   POST /v1/messages         — proxy to Anthropic after code + rate-limit check
   GET  /v1/models           — (optional) proxy model list
 
@@ -22,6 +23,9 @@ Secrets (set via `fly secrets set`):
   VALID_CODES         — comma-separated list, e.g. "UBONGO-ALPHA-7X2K,UBONGO-..."
                         (or leave unset and use the built-in dev codes)
   DAILY_QUERY_LIMIT   — int, default 200 per code per UTC day
+  INVITE_SECRET       — HMAC secret for signed codes (needed for /provision)
+  PROVISION_PER_IP_PER_DAY — codes one network may get per UTC day, default 3
+  PROVISION_DAILY_CAP — codes issued across everyone per UTC day, default 500
 """
 from __future__ import annotations
 
@@ -89,6 +93,21 @@ def _is_signed_code(code: str) -> bool:
         .upper()
     )
     return hmac.compare_digest(expected, sig_part)
+
+
+def _mint_signed_code() -> str:
+    """A new signed code, same shape as the ones /api/request-invite emails."""
+    id_part = os.urandom(4).hex().upper()
+    sig = (
+        hmac.new(INVITE_SECRET.encode(), id_part.encode(), hashlib.sha256)
+        .hexdigest()[:_SIGNED_CODE_SIG_LEN]
+        .upper()
+    )
+    return f"UBONGO-{id_part}-{sig}"
+
+
+PROVISION_PER_IP_PER_DAY = int(os.getenv("PROVISION_PER_IP_PER_DAY", "3"))
+PROVISION_DAILY_CAP = int(os.getenv("PROVISION_DAILY_CAP", "500"))
 
 
 # ── App ───────────────────────────────────────────────────────────────────
@@ -166,6 +185,50 @@ def health():
         "groq_configured": bool(GROQ_KEY),
         "valid_codes": len(VALID_CODES),
     }
+
+
+# ── Provisioning: new installs get a code without an invite ──────────────
+#
+# Every code still carries its own daily query limit, so the cost of one
+# install is capped. These counters cap how many codes can be minted: per
+# network (so one machine can't farm codes) and in total per day (so a
+# flood can't run up the Anthropic bill). In-process, like the query
+# counters — fine for a single Fly instance.
+_provisioned: dict[str, dict[str, int]] = defaultdict(lambda: {"day": "", "count": 0})
+_provisioned_total = {"day": "", "count": 0}
+
+
+def _client_ip(request: Request) -> str:
+    # Fly sets Fly-Client-IP; fall back to the first X-Forwarded-For hop
+    fly = request.headers.get("fly-client-ip")
+    if fly:
+        return fly.strip()
+    fwd = request.headers.get("x-forwarded-for") or ""
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+@app.post("/provision")
+def provision(request: Request):
+    """Issue a signed code to a fresh install, within the per-network and daily caps."""
+    if not INVITE_SECRET:
+        raise HTTPException(status_code=503, detail="Automatic sign-up isn't enabled on this server.")
+    today = _today_key()
+    if _provisioned_total["day"] != today:
+        _provisioned_total["day"] = today
+        _provisioned_total["count"] = 0
+    if _provisioned_total["count"] >= PROVISION_DAILY_CAP:
+        raise HTTPException(status_code=429, detail="Ubongo is at capacity for today. Please try again tomorrow.")
+    entry = _provisioned[_client_ip(request)]
+    if entry["day"] != today:
+        entry["day"] = today
+        entry["count"] = 0
+    if entry["count"] >= PROVISION_PER_IP_PER_DAY:
+        raise HTTPException(status_code=429, detail="Too many new sign-ups from this network today. Try again tomorrow.")
+    entry["count"] += 1
+    _provisioned_total["count"] += 1
+    return {"code": _mint_signed_code(), "tier": "beta", "daily_limit": DAILY_QUERY_LIMIT}
 
 
 class ValidateRequest(BaseModel):

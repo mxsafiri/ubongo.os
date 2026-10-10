@@ -354,6 +354,54 @@ def onboarding_activate(body: InviteCodeRequest):
     }
 
 
+@app.post("/onboarding/start")
+def onboarding_start():
+    """
+    Get a new install straight in: ask the ubongo proxy for a code of its own
+    and save it, exactly as if the user had pasted an invite. Already set up
+    (a saved code, or your own API key)? Nothing to do.
+    """
+    import json as _json
+    import urllib.request as _urq
+    import urllib.error as _uerr
+
+    if settings.invite_code or settings.anthropic_api_key:
+        return {"onboarded": True, "provisioned": False}
+
+    proxy = settings.proxy_url.rstrip("/")
+    req = _urq.Request(
+        f"{proxy}/provision",
+        data=b"{}",
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with _urq.urlopen(req, timeout=10) as resp:
+            payload = _json.loads(resp.read().decode("utf-8") or "{}")
+    except _uerr.HTTPError as e:
+        try:
+            detail = _json.loads(e.read().decode("utf-8") or "{}").get("detail")
+        except Exception:
+            detail = None
+        raise HTTPException(status_code=e.code, detail=detail or "Couldn't set up your access. Try again.")
+    except _uerr.URLError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not reach ubongo servers. Check your internet and try again. ({e.reason})",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Unexpected error setting up access: {e}")
+
+    code = (payload.get("code") or "").strip()
+    if not code:
+        raise HTTPException(status_code=502, detail="Couldn't set up your access. Try again.")
+
+    settings.save_partial(invite_code=code, user_tier="pro")
+    global _router
+    _router = None
+    return {"onboarded": True, "provisioned": True, "daily_limit": payload.get("daily_limit")}
+
+
 @app.post("/onboarding/reset")
 def onboarding_reset():
     """Clear the saved invite code — for testing or rotating codes."""
