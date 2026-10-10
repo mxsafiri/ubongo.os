@@ -292,6 +292,7 @@ export function OrbitalView({
         </AnimatePresence>
 
         <motion.button
+          aria-label="Hold to talk"
           className="relative cursor-pointer select-none"
           onClick={handleClick}
           onPointerDown={handlePointerDown}

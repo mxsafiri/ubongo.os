@@ -259,6 +259,19 @@ export default function App() {
   // Release the orb → stop, upload, transcribe, submit.
 
   const [isListening, setIsListening] = useState(false);
+
+  // Voice status and errors show in the task panel, never only in the console
+  const voiceNotice = useCallback((title: string, description: string, status: "in-progress" | "failed") => {
+    // Show it in the response panel, the same place answers appear; for
+    // problems the explanation is the answer text, so it's always visible
+    setResponse(status === "failed" ? description : null);
+    setResponseCards([]);
+    setView("responding");
+    setAgentTasks([{
+      id: "voice", title, description, status, priority: "high",
+      level: 0, dependencies: [], subtasks: [],
+    }]);
+  }, []);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
@@ -278,7 +291,7 @@ export default function App() {
     if (mediaRecorderRef.current) return; // already recording
 
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      console.warn("voice: MediaRecorder/getUserMedia unavailable");
+      voiceNotice("Voice isn't available", "This window can't record audio.", "failed");
       return;
     }
 
@@ -334,6 +347,9 @@ export default function App() {
           : "webm";
         const form = new FormData();
         form.append("file", blob, `clip.${ext}`);
+        if (profile?.language && profile.language !== "auto") form.append("language", profile.language);
+        if (profile?.agentName) form.append("agent_name", profile.agentName);
+        voiceNotice("Transcribing…", "", "in-progress");
 
         try {
           const r = await fetch("http://127.0.0.1:8765/transcribe", {
@@ -341,15 +357,16 @@ export default function App() {
             body: form,
           });
           if (!r.ok) {
-            const err = await r.json().catch(() => ({}));
-            console.warn("voice: transcribe failed", r.status, err);
+            const err = (await r.json().catch(() => ({}))) as { detail?: string };
+            voiceNotice("Couldn't hear that", err.detail || "Transcription failed. Try again.", "failed");
             return;
           }
           const { text } = (await r.json()) as { text?: string };
           const cleaned = (text ?? "").trim();
           if (cleaned) handleSubmit(cleaned);
-        } catch (e) {
-          console.warn("voice: transcribe network error", e);
+          else voiceNotice("Didn't catch that", "Hold the orb and speak a little longer.", "failed");
+        } catch {
+          voiceNotice("Couldn't hear that", "ubongo's engine isn't reachable. Quit and reopen the app.", "failed");
         } finally {
           audioChunksRef.current = [];
           // Silence unused-locals lint
@@ -359,13 +376,17 @@ export default function App() {
 
       recorder.start();
       setIsListening(true);
-    } catch (e) {
-      console.warn("voice: mic permission denied or unavailable", e);
+    } catch {
+      voiceNotice(
+        "Microphone is off",
+        "Allow it in System Settings → Privacy & Security → Microphone → ubongo, then try again.",
+        "failed",
+      );
       stopMediaTracks();
       mediaRecorderRef.current = null;
       setIsListening(false);
     }
-  }, [handleSubmit, stopMediaTracks]);
+  }, [handleSubmit, stopMediaTracks, voiceNotice, profile]);
 
   const handleOrbHoldEnd = useCallback(() => {
     const recorder = mediaRecorderRef.current;

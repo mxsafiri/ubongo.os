@@ -37,10 +37,13 @@ import { invoke } from "@/lib/tauri";
 // ── profile shape persisted to localStorage ─────────────────────────
 
 export type Tone = "concise" | "warm" | "formal";
+/** Which language voice expects: "auto" hears Swahili, English or a mix. */
+export type VoiceLanguage = "auto" | "sw" | "en";
 
 export interface OnboardingProfile {
   agentName: string;
   tone:      Tone;
+  language:  VoiceLanguage;
   /** UNIX seconds when the user completed onboarding. */
   completedAt: number;
 }
@@ -56,6 +59,7 @@ export function loadProfile(): OnboardingProfile | null {
     return {
       agentName:   String(parsed.agentName),
       tone:        (parsed.tone as Tone) ?? "concise",
+      language:    (["auto", "sw", "en"].includes(String(parsed.language)) ? parsed.language : "auto") as VoiceLanguage,
       completedAt: Number(parsed.completedAt ?? 0),
     };
   } catch {
@@ -86,6 +90,12 @@ const LADDER: Step[] = [1, 2, 3];
 
 const NAME_SUGGESTIONS = ["Ubongo", "Mshikaji", "Akili"] as const;
 
+const LANGUAGES: { value: VoiceLanguage; label: string }[] = [
+  { value: "auto", label: "BOTH" },
+  { value: "sw",   label: "KISWAHILI" },
+  { value: "en",   label: "ENGLISH" },
+];
+
 const TONES: { value: Tone; label: string; blurb: string }[] = [
   { value: "concise", label: "CONCISE", blurb: "Short, direct, no preambles." },
   { value: "warm",    label: "WARM",    blurb: "Conversational, friendly, natural." },
@@ -102,6 +112,7 @@ export function Onboarding({ onComplete }: Props) {
   const [step, setStep]           = useState<Step>(1);
   const [agentName, setAgentName] = useState<string>("Ubongo");
   const [tone, setTone]           = useState<Tone>("concise");
+  const [language, setLanguage]   = useState<VoiceLanguage>("auto");
 
   const [phase, setPhase]         = useState<Phase>("idle");
   const [error, setError]         = useState<string | null>(null);
@@ -158,6 +169,7 @@ export function Onboarding({ onComplete }: Props) {
     saveProfile({
       agentName:   agentName.trim() || "Ubongo",
       tone,
+      language,
       completedAt: Math.floor(Date.now() / 1000),
     });
     setPhase("success");
@@ -242,6 +254,8 @@ export function Onboarding({ onComplete }: Props) {
               agentName={agentName}
               tone={tone}
               onChange={setTone}
+              language={language}
+              onLanguage={setLanguage}
               onStart={handleStart}
               onBack={goBack}
               phase={phase}
@@ -402,6 +416,8 @@ function StepTone({
   agentName,
   tone,
   onChange,
+  language,
+  onLanguage,
   onStart,
   onBack,
   phase,
@@ -410,6 +426,8 @@ function StepTone({
   agentName: string;
   tone: Tone;
   onChange: (t: Tone) => void;
+  language: VoiceLanguage;
+  onLanguage: (l: VoiceLanguage) => void;
   onStart: () => void;
   onBack: () => void;
   phase: Phase;
@@ -457,6 +475,26 @@ function StepTone({
             </button>
           );
         })}
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="font-mono text-[9px] tracking-[0.22em] text-slate-600 uppercase mr-1">
+          You speak
+        </span>
+        {LANGUAGES.map((l) => (
+          <button
+            key={l.value}
+            type="button"
+            onClick={() => onLanguage(l.value)}
+            className={`font-mono text-[11px] tracking-wider rounded-full px-3 py-1 border transition-colors ${
+              language === l.value
+                ? "border-indigo-400/60 bg-indigo-500/[0.1] text-indigo-200"
+                : "border-white/[0.08] text-slate-400 hover:border-indigo-400/30 hover:text-slate-200"
+            }`}
+          >
+            {l.label}
+          </button>
+        ))}
       </div>
 
       {phase === "error" && error && (
