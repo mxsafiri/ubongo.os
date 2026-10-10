@@ -115,6 +115,11 @@ jobs:
   tauri-dmg:
     needs: preflight
     runs-on: macos-latest
+    env:
+      # Signing and notarization switch on by themselves once the Apple
+      # secrets exist (see docs/RELEASING.md); until then builds stay unsigned.
+      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
+      HAS_APPLE_NOTARY: ${{ secrets.APPLE_API_KEY_P8 != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -160,8 +165,56 @@ jobs:
           ls -lh desktop/src-tauri/binaries/ubongo-server/ubongo-server
           du -sh desktop/src-tauri/binaries/ubongo-server/_internal
 
+      - name: Import Developer ID certificate
+        if: env.HAS_APPLE_CERT == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KC_PASS="$(openssl rand -hex 16)"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KC_PASS" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KC_PASS" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          rm "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KC_PASS" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.*)"/\1/')
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::APPLE_CERTIFICATE has no 'Developer ID Application' identity"
+            exit 1
+          fi
+          echo "SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+
+      - name: Sign the bundled server
+        if: env.HAS_APPLE_CERT == 'true'
+        run: |
+          scripts/macos_sign_server.sh desktop/src-tauri/binaries/ubongo-server \
+            "$SIGNING_IDENTITY" desktop/server/entitlements.plist
+
+      # Runs after signing, so it also proves the signed server still starts
       - name: Smoke-test the bundled server
         run: scripts/smoke_server.sh desktop/src-tauri/binaries/ubongo-server/ubongo-server
+
+      - name: Prepare notarization credentials
+        if: env.HAS_APPLE_CERT == 'true' && env.HAS_APPLE_NOTARY == 'true'
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          echo "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+          # Tauri notarizes and staples the app when these are set
+          {
+            echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8"
+            echo "APPLE_API_KEY=$APPLE_API_KEY_ID"
+            echo "APPLE_API_ISSUER=$APPLE_API_ISSUER"
+          } >> "$GITHUB_ENV"
 
       - name: Install frontend dependencies
         run: npm ci
@@ -171,10 +224,18 @@ jobs:
         run: npm run tauri build
         working-directory: desktop
         env:
-          # Skip Apple code-signing for unsigned beta builds.
-          # Remove these two lines once you have an Apple Developer cert in CI.
-          APPLE_SIGNING_IDENTITY: "-"
-          TAURI_SKIP_NOTARIZE: "true"
+          # Developer ID when the certificate secret exists, otherwise ad-hoc ("-")
+          APPLE_SIGNING_IDENTITY: ${{ env.SIGNING_IDENTITY || '-' }}
+
+      - name: Check the signed app passes Gatekeeper
+        if: env.HAS_APPLE_CERT == 'true'
+        run: |
+          APP=$(find desktop/src-tauri/target/release/bundle/macos -maxdepth 1 -name "*.app" | head -1)
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          if [ "$HAS_APPLE_NOTARY" = "true" ]; then
+            xcrun stapler validate "$APP"
+            spctl --assess --type execute --verbose "$APP"
+          fi
 
       - name: Locate DMG
         id: dmg
@@ -182,6 +243,10 @@ jobs:
           DMG=$(find desktop/src-tauri/target/release/bundle -name "*.dmg" | head -1)
           echo "path=$DMG" >> $GITHUB_OUTPUT
           echo "name=$(basename $DMG)" >> $GITHUB_OUTPUT
+
+      - name: Remove signing keychain
+        if: always() && env.HAS_APPLE_CERT == 'true'
+        run: security delete-keychain "$KEYCHAIN" || true
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
@@ -215,9 +280,11 @@ jobs:
             ## Install
 
             ### macOS (Apple Silicon M1+)
-            Download `ubongo_*.dmg` below, open it, drag to Applications.
-            First launch: right-click → Open (bypasses unsigned-app warning).
-            Or remove the quarantine flag:
+            Download `ubongo_*.dmg` below, open it and drag ubongo to Applications.
+            Open it, pick a name and a tone, and press START. There's no sign-up.
+
+            If macOS says it couldn't verify ubongo, go to
+            **System Settings → Privacy & Security → Open Anyway**, or run once:
             ```bash
             xattr -dr com.apple.quarantine /Applications/ubongo.app
             ```

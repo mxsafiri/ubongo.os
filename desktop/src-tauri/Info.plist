@@ -4,6 +4,8 @@
 <dict>
     <key>NSMicrophoneUsageDescription</key>
     <string>Ubongo uses your microphone for hold-to-speak voice input. Audio is sent securely to a transcription service and is not stored.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Ubongo controls apps like Music, Finder and Safari when you ask it to.</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsLocalNetworking</key>
