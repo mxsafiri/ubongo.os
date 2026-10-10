@@ -1044,8 +1044,14 @@ def _read_file_tool(tool_input: dict):
 
     if not raw:
         return fail("No file path given.")
-    path = Path(os.path.expanduser(raw)).resolve()
-    home = Path.home().resolve()
+    home = Path.home()
+    # Expand ~ from Path.home(): on Windows os.path.expanduser uses USERPROFILE instead
+    if raw == "~" or raw.startswith(("~/", "~\\")):
+        raw_path = home / raw[2:]
+    else:
+        raw_path = Path(raw)
+    path = raw_path.resolve()
+    home = home.resolve()
     if path != home and home not in path.parents:
         return fail("I can only read files inside your home folder.")
     if not path.is_file():
