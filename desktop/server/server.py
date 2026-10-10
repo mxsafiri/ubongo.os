@@ -8,11 +8,11 @@ All traffic is local-only — never accessible from outside the machine.
 """
 
 import logging
-import os
 import re
 import sys
 import threading
 import time
+from contextvars import ContextVar
 from pathlib import Path
 from typing import List, Optional
 
@@ -223,6 +223,15 @@ class Message(BaseModel):
 class QueryRequest(BaseModel):
     message: str
     history: List[Message] = []
+    # The assistant's name and tone from onboarding: {"agent_name", "tone"}
+    profile: Optional[dict] = None
+    # The app the user was in when they opened ubongo (e.g. "Mail")
+    context_app: Optional[str] = None
+
+
+class DraftRequest(BaseModel):
+    text: str
+    app: Optional[str] = None
 
 
 class AgentStep(BaseModel):
@@ -534,6 +543,10 @@ def query(body: QueryRequest):
 
 _MAX_TOOL_ROUNDS = 6
 
+# The app the user was in for the current question ("reply to this" reads
+# from it; drafts offer to go back into it)
+_context_app: ContextVar[Optional[str]] = ContextVar("context_app", default=None)
+
 
 @app.post("/query/agentic", response_model=AgentResponse)
 def query_agentic(body: QueryRequest):
@@ -552,6 +565,7 @@ def query_agentic(body: QueryRequest):
         raise HTTPException(status_code=503, detail=_no_provider_detail())
 
     executor = get_executor()
+    _context_app.set((body.context_app or "").strip() or None)
     tools    = get_tools_for_tier(settings.effective_tier)
     history  = [{"role": m.role, "content": m.content} for m in body.history]
 
@@ -565,7 +579,7 @@ def query_agentic(body: QueryRequest):
             message=body.message,
             tools=tools,
             history=history if history else None,
-            system_prompt=_build_system_prompt(memory_context),
+            system_prompt=_build_system_prompt(memory_context, body.profile, body.context_app),
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AI provider error: {e}")
@@ -581,7 +595,7 @@ def query_agentic(body: QueryRequest):
     # ── Step 2: run the tools Claude asks for, round after round ──────
     # Multi-step jobs ("find the contract, then tell me what it says") need
     # several rounds: search → read → answer.
-    system_prompt = _build_system_prompt(memory_context)
+    system_prompt = _build_system_prompt(memory_context, body.profile, body.context_app)
     can_continue = hasattr(provider, "continue_with_tools")
     messages: List[dict] = [*history, {"role": "user", "content": body.message}]
     final_text = response.content
@@ -660,6 +674,29 @@ def query_agentic(body: QueryRequest):
 
 
 # ── Memory endpoints ─────────────────────────────────────────────────────
+
+@app.post("/draft/copy")
+def draft_copy(body: DraftRequest):
+    """Put a draft on the clipboard."""
+    from assistant_cli.tools import desktop_text
+    try:
+        desktop_text.set_clipboard(body.text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Couldn't copy: {e}")
+    return {"ok": True}
+
+
+@app.post("/draft/insert")
+def draft_insert(body: DraftRequest):
+    """Paste a draft into the app the user came from. Only ever called when
+    the user clicks Insert on a draft."""
+    from assistant_cli.tools import desktop_text
+    try:
+        desktop_text.paste_text(body.app or "", body.text)
+    except desktop_text.DesktopTextError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "app": body.app}
+
 
 @app.post("/memory/search")
 def memory_search(body: MemorySearchRequest):
@@ -811,6 +848,9 @@ async def transcribe(
 def _build_card_from_tool(tool_name: str, tool_input: dict, exec_result) -> Optional[ResponseCard]:
     """Convert a tool execution result into a rich UI card."""
     try:
+        if tool_name == "show_draft" and exec_result.success:
+            return ResponseCard(type="draft", data=exec_result.data)
+
         if tool_name == "web_search":
             data = exec_result.data or {}
             result_type = data.get("type", "search")
@@ -989,10 +1029,32 @@ def _parse_search_results(message: str, query: str) -> list:
     return items[:8]
 
 
-def _build_system_prompt(memory_context: str) -> str:
-    """Compose the full system prompt with memory context."""
+_TONES = {
+    "concise": "short and direct, no preambles",
+    "warm": "conversational, friendly and natural",
+    "formal": "professional, precise and polite",
+}
+
+
+def _build_system_prompt(
+    memory_context: str,
+    profile: Optional[dict] = None,
+    context_app: Optional[str] = None,
+) -> str:
+    """Compose the full system prompt with memory context, the assistant's
+    name and tone, and the app the user came from."""
+    profile = profile or {}
+    name = str(profile.get("agent_name") or "ubongo").strip()[:32] or "ubongo"
+    tone = _TONES.get(str(profile.get("tone") or "").lower(), _TONES["concise"])
+    where = (
+        f"The user opened you from {context_app}; 'this' usually means what they selected there.\n"
+        if context_app else ""
+    )
     return (
-        "You are ubongo — a personal AI OS layer on the user's computer.\n\n"
+        f"You are {name} — a personal AI OS layer on the user's computer.\n"
+        f"Write everything — answers and drafts — in a {tone} tone. "
+        "Reply in the language the user writes in (English or Swahili).\n"
+        f"{where}\n"
         "CRITICAL: You are a VISUAL DASHBOARD, not a chatbot. Your text accompanies visual cards.\n\n"
         "TOOL USE RULES (follow strictly):\n"
         "- News/events/updates → ALWAYS call web_search with search_type='news'. NEVER make up news.\n"
@@ -1001,6 +1063,10 @@ def _build_system_prompt(memory_context: str) -> str:
         "- What a file says / summarise / answer from a document → memory_search to find it, "
         "then read_file on the best match. Answer from the text you read and name the file. "
         "Never guess a document's contents.\n"
+        "- Write / draft / reply / rewrite → if they mean something on screen ('reply to this', "
+        "'rewrite this'), call get_selected_text first. Put the finished text in show_draft — "
+        "never only in your answer. You never send or paste anything yourself: the user "
+        "clicks Insert or Copy on the draft.\n"
         "- System status → ALWAYS call system_info.\n"
         "- Play/control music → ALWAYS call music_control.\n"
         "- Open/close apps → ALWAYS call app_control.\n"
@@ -1075,6 +1141,24 @@ def _read_file_tool(tool_input: dict):
     )
 
 
+def _selected_text_tool():
+    """What the user has selected in the app they came from."""
+    from assistant_cli.models import ExecutionResult
+    from assistant_cli.tools import desktop_text
+
+    app = _context_app.get()
+    try:
+        text = desktop_text.copy_selection(app or "").strip()
+    except desktop_text.DesktopTextError as e:
+        return ExecutionResult(success=False, message=str(e), data=None, error=str(e))
+    if not text:
+        msg = f"Nothing is selected in {app}. Ask the user to select the text, then ask again."
+        return ExecutionResult(success=False, message=msg, data=None, error=msg)
+    text = text[:20_000]
+    return ExecutionResult(success=True, message=f"Selected text in {app}:\n\n{text}",
+                           data={"app": app, "text": text}, error=None)
+
+
 def _execute_tool(executor: CommandExecutor, tool_name: str, tool_input: dict):
     """Map a Claude tool_use call onto the existing executor or memory store."""
     from assistant_cli.models import ExecutionResult
@@ -1121,6 +1205,22 @@ def _execute_tool(executor: CommandExecutor, tool_name: str, tool_input: dict):
         # ── Read a document's text ───────────────────────────────────
         if tool_name == "read_file":
             return _read_file_tool(tool_input)
+
+        # ── Write & reply ────────────────────────────────────────────
+        if tool_name == "get_selected_text":
+            return _selected_text_tool()
+        if tool_name == "show_draft":
+            text = str(tool_input.get("text") or "").strip()
+            if not text:
+                return ExecutionResult(success=False, message="The draft is empty.", data=None, error="empty draft")
+            app = _context_app.get()
+            where = f" with buttons to copy it or insert it into {app}" if app else " with a Copy button"
+            return ExecutionResult(
+                success=True,
+                message=f"Draft shown to the user{where}. It has not been sent or pasted.",
+                data={"text": text, "title": str(tool_input.get("title") or "Draft")[:80], "app": app},
+                error=None,
+            )
 
         # ── File operations ──────────────────────────────────────────
         if tool_name == "file_operation":
