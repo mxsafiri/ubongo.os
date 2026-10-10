@@ -38,9 +38,10 @@ jobs:
         run: pytest -v --tb=short
         continue-on-error: true
 
-  # Build the desktop app's server exactly as the release does and start it
-  # on macOS, so a server that can't launch is caught before it ships.
-  server-bundle:
+  # Build the Mac app exactly as the release does (unsigned): start the
+  # packaged server to prove it runs, then build the DMG and keep it as a
+  # downloadable artifact so every change can be tried on a real Mac first.
+  mac-app:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,6 +51,19 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+
       - name: Install server deps + PyInstaller
         run: |
           python -m pip install --upgrade pip
@@ -58,7 +72,29 @@ jobs:
           pip install pyinstaller
 
       - name: Build server bundle
-        run: pyinstaller desktop/server/ubongo-server.spec --noconfirm
+        run: |
+          pyinstaller desktop/server/ubongo-server.spec --noconfirm
+          rm -rf desktop/src-tauri/binaries/ubongo-server
+          mkdir -p desktop/src-tauri/binaries
+          cp -R dist/ubongo-server desktop/src-tauri/binaries/ubongo-server
 
       - name: Smoke-test the bundled server
-        run: scripts/smoke_server.sh dist/ubongo-server/ubongo-server
+        run: scripts/smoke_server.sh desktop/src-tauri/binaries/ubongo-server/ubongo-server
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: desktop
+
+      - name: Build the app and DMG
+        run: npm run tauri build
+        working-directory: desktop
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
+
+      - name: Upload test DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: ubongo-dmg
+          path: desktop/src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 14
