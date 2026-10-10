@@ -34,9 +34,10 @@ export default function App() {
   const askBarRef = useRef<AskBarHandle>(null);
 
   // ── Onboarding gate ──────────────────────────────────────────────
-  // `null` while checking, `true` once validated, `false` → show Onboarding
-  const [onboarded, setOnboarded] = useState<boolean | null>(null);
+  // Finished onboarding once on this machine → straight in. Access is the
+  // server's job (it sets itself up in the background), never a gate here.
   const [profile, setProfile] = useState<OnboardingProfile | null>(() => loadProfile());
+  const [onboarded, setOnboarded] = useState<boolean>(() => profile !== null);
 
   // ── Update notifications ─────────────────────────────────────────
   // Polls GitHub releases on mount and every 4h. When a newer tag than
@@ -44,12 +45,6 @@ export default function App() {
   // the window. Click → opens the DMG download. The user can dismiss
   // a release once and never get nagged about it again.
   const update = useUpdateCheck();
-
-  useEffect(() => {
-    invoke<{ onboarded: boolean }>("onboarding_status")
-      .then((d) => setOnboarded(Boolean(d?.onboarded)))
-      .catch(() => setOnboarded(false)); // if server unreachable, show onboarding
-  }, []);
 
   // Chosen agent name drives the ask-bar placeholder; fallback stays neutral.
   const agentName = profile?.agentName?.trim() || "ubongo";
@@ -421,11 +416,6 @@ export default function App() {
         </div>
       </div>
     );
-  }
-
-  // While we're still checking, render nothing (transparent — orb drifts in after)
-  if (onboarded === null) {
-    return <div className="fixed inset-0" />;
   }
 
   return (

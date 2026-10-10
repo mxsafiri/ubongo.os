@@ -12,6 +12,7 @@ import os
 import re
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -78,9 +79,101 @@ _semantic_memory: Optional[SemanticMemory] = None
 
 def get_router() -> ProviderRouter:
     global _router
+    if not settings.is_onboarded:
+        _provision_in_background()
     if _router is None:
         _router = ProviderRouter(settings)
     return _router
+
+
+# ── Access: every install gets its own code from the ubongo proxy ────────
+#
+# No invite codes: the first time the app runs (and again every 30s until it
+# works), the server asks the proxy for a code and saves it. Nothing waits on
+# this — if the proxy can't be reached, the app still opens and access
+# arrives as soon as it can.
+
+_PROVISION_RETRY_S = 30
+_last_provision_attempt = 0.0
+_provision_lock = threading.Lock()
+
+
+def _provision_access(force: bool = False) -> Optional[str]:
+    """Get this install its own access code. Returns None once access is set
+    up, otherwise why it isn't yet (it will be retried)."""
+    import json as _json
+    import urllib.error as _uerr
+    import urllib.request as _urq
+
+    global _router, _last_provision_attempt
+    if settings.is_onboarded:
+        return None
+    with _provision_lock:
+        if settings.is_onboarded:
+            return None
+        if not force and time.time() - _last_provision_attempt < _PROVISION_RETRY_S:
+            return "Setting up access — retrying shortly."
+        _last_provision_attempt = time.time()
+
+        req = _urq.Request(
+            f"{settings.proxy_url.rstrip('/')}/provision",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with _urq.urlopen(req, timeout=8) as resp:
+                payload = _json.loads(resp.read().decode("utf-8") or "{}")
+        except _uerr.HTTPError as e:
+            try:
+                detail = _json.loads(e.read().decode("utf-8") or "{}").get("detail")
+            except Exception:
+                detail = None
+            logger.warning(f"Provisioning failed ({e.code}): {detail}")
+            return detail or f"ubongo servers answered {e.code}."
+        except Exception as e:
+            logger.warning(f"Provisioning failed: {e}")
+            return "Couldn't reach ubongo servers. Check your internet connection."
+
+        code = (payload.get("code") or "").strip()
+        if not code:
+            return "ubongo servers didn't return access. Retrying shortly."
+        settings.save_partial(invite_code=code, user_tier="pro")
+        _router = None  # rebuild with the new credentials
+        logger.info("Access set up for this install")
+        return None
+
+
+def _no_provider_detail() -> str:
+    if not settings.is_onboarded:
+        _provision_in_background()
+        return "Ubongo is still setting up — try again in a few seconds."
+    return ("No AI provider available. Configure an API key in Settings, "
+            "or install Ollama for offline use.")
+
+
+def _access_rejected(text: Optional[str]) -> bool:
+    """True when the ubongo proxy refused this install's code (e.g. it was
+    issued under an old signing key). Only the proxy's own rejection counts:
+    an upstream Anthropic auth error must not make every install re-provision."""
+    t = (text or "").lower()
+    return bool(settings.invite_code) and "401" in t and "invite code" in t
+
+
+def _recover_access() -> str:
+    """Forget a code the proxy no longer accepts and get a fresh one."""
+    global _router, _last_provision_attempt
+    logger.warning("Proxy rejected this install's code — getting a new one")
+    settings.save_partial(invite_code=None)
+    _router = None
+    _last_provision_attempt = 0.0
+    _provision_in_background()
+    return "Ubongo is refreshing its access — try again in a few seconds."
+
+
+def _provision_in_background() -> None:
+    if time.time() - _last_provision_attempt >= _PROVISION_RETRY_S:
+        threading.Thread(target=_provision_access, daemon=True).start()
 
 
 def get_executor() -> CommandExecutor:
@@ -178,6 +271,8 @@ class MemorySearchRequest(BaseModel):
 def startup_memory():
     """Run initial file scan in background and start the file watcher."""
     global _watcher
+    if not settings.is_onboarded:
+        _provision_in_background()
     store = get_memory()
     _watcher = FileWatcher(store)
 
@@ -356,50 +451,10 @@ def onboarding_activate(body: InviteCodeRequest):
 
 @app.post("/onboarding/start")
 def onboarding_start():
-    """
-    Get a new install straight in: ask the ubongo proxy for a code of its own
-    and save it, exactly as if the user had pasted an invite. Already set up
-    (a saved code, or your own API key)? Nothing to do.
-    """
-    import json as _json
-    import urllib.request as _urq
-    import urllib.error as _uerr
-
-    if settings.invite_code or settings.anthropic_api_key:
-        return {"onboarded": True, "provisioned": False}
-
-    proxy = settings.proxy_url.rstrip("/")
-    req = _urq.Request(
-        f"{proxy}/provision",
-        data=b"{}",
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with _urq.urlopen(req, timeout=10) as resp:
-            payload = _json.loads(resp.read().decode("utf-8") or "{}")
-    except _uerr.HTTPError as e:
-        try:
-            detail = _json.loads(e.read().decode("utf-8") or "{}").get("detail")
-        except Exception:
-            detail = None
-        raise HTTPException(status_code=e.code, detail=detail or "Couldn't set up your access. Try again.")
-    except _uerr.URLError as e:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Could not reach ubongo servers. Check your internet and try again. ({e.reason})",
-        )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Unexpected error setting up access: {e}")
-
-    code = (payload.get("code") or "").strip()
-    if not code:
-        raise HTTPException(status_code=502, detail="Couldn't set up your access. Try again.")
-
-    settings.save_partial(invite_code=code, user_tier="pro")
-    global _router
-    _router = None
-    return {"onboarded": True, "provisioned": True, "daily_limit": payload.get("daily_limit")}
+    """Finish onboarding. Tries to set up access right away, but never blocks:
+    if it can't yet, the server keeps retrying in the background."""
+    problem = _provision_access(force=True)
+    return {"onboarded": True, "access_ready": problem is None, "note": problem}
 
 
 @app.post("/onboarding/reset")
@@ -446,11 +501,7 @@ def query(body: QueryRequest):
 
     # Check if provider is actually usable
     if not provider.is_available():
-        raise HTTPException(
-            status_code=503,
-            detail="No AI provider available. Configure an API key in Settings, "
-                   "or install Ollama for offline use.",
-        )
+        raise HTTPException(status_code=503, detail=_no_provider_detail())
 
     history  = [{"role": m.role, "content": m.content} for m in body.history]
 
@@ -466,6 +517,9 @@ def query(body: QueryRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AI provider error: {e}")
+
+    if _access_rejected(response.content):
+        raise HTTPException(status_code=503, detail=_recover_access())
 
     settings.increment_query_count()
 
@@ -492,11 +546,7 @@ def query_agentic(body: QueryRequest):
 
     # Check if provider is actually usable
     if not provider.is_available():
-        raise HTTPException(
-            status_code=503,
-            detail="No AI provider available. Configure an API key in Settings, "
-                   "or install Ollama for offline use.",
-        )
+        raise HTTPException(status_code=503, detail=_no_provider_detail())
 
     executor = get_executor()
     tools    = get_tools_for_tier(settings.effective_tier)
@@ -516,6 +566,9 @@ def query_agentic(body: QueryRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AI provider error: {e}")
+
+    if _access_rejected(response.content):
+        raise HTTPException(status_code=503, detail=_recover_access())
 
     settings.increment_query_count()
 
