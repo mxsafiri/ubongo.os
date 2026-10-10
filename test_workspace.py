@@ -1202,3 +1202,35 @@ if __name__ == "__main__":
             failures += 1
             print(f"FAIL  {name}: {exc}")
     sys.exit(1 if failures else 0)
+
+
+def test_run_turn_closes_the_memory_it_opens(monkeypatch) -> None:
+    """A turn that opens its own SemanticMemory must close it, or its SQLite
+    file stays locked (on Windows the temp workspace can't be deleted)."""
+    import assistant_cli.core.agent_loop as agent_loop
+
+    opened: list = []
+
+    class TrackedMemory(SemanticMemory):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self.closed = False
+            opened.append(self)
+
+        def close(self) -> None:
+            self.closed = True
+            super().close()
+
+    monkeypatch.setattr(agent_loop, "SemanticMemory", TrackedMemory)
+    with tempfile.TemporaryDirectory() as tmp:
+        ensure_workspace(Path(tmp))
+        ws = load_workspace(Path(tmp))
+        provider = FakeProvider([AIResponse(content="hi", stop_reason="end_turn")])
+        run_turn("hi", provider, workspace=ws)
+        assert len(opened) == 1 and opened[0].closed
+
+        # A memory the caller passes in stays open for the caller
+        mine = TrackedMemory(ws.episodic_dir)
+        run_turn("hi", FakeProvider([AIResponse(content="hi", stop_reason="end_turn")]), workspace=ws, memory=mine)
+        assert not mine.closed
+        mine.close()

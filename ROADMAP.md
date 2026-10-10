@@ -63,6 +63,8 @@ Swahili, and it actually gets done on their Mac.
 - [ ] Voice in Swahili and English, end to end
 - [ ] A CI test for each hero flow
 - [ ] Hide unfinished features from the UI
+- [ ] Fix the ~70 older type errors, then make the whole-package type check block CI
+      (tests and `assistant_cli/memory` already block)
 
 ## Phase 2: the wallet (NEDApay, nTZS)
 
