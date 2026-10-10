@@ -150,25 +150,6 @@ function SectionLabel({ num, label }: { num: string; label: string }) {
 export default function LandingPage() {
   useEffect(() => { _setTheme(); }, []);
   const { theme, toggle } = useTheme();
-  const [email, setEmail] = useState('');
-  const [submitted, setSubmitted] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
-  const submitInvite = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (submitting) return;
-    const trimmed = email.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) { setErrorMsg('Please enter a valid email.'); return; }
-    setSubmitting(true); setErrorMsg(null);
-    try {
-      const res = await fetch('/api/request-invite', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: trimmed }) });
-      if (!res.ok) { const body = await res.json().catch(() => ({})); setErrorMsg(body?.error || 'Could not send invite. Try again.'); }
-      else setSubmitted(true);
-    } catch { setErrorMsg('Network error. Check your connection and try again.'); }
-    finally { setSubmitting(false); }
-  };
-
   const { scrollYProgress, scrollY } = useScroll();
   const videoY = useTransform(scrollY, [0, 600], [0, -40]);
   const videoScale = useTransform(scrollY, [0, 600], [1, 1.08]);
@@ -219,7 +200,7 @@ export default function LandingPage() {
                 </motion.div>
               </AnimatePresence>
             </button>
-            <a href="#access" className="landing-btn-ghost text-[10px] px-3 py-1 tracking-wider">GET ACCESS</a>
+            <a href="/api/download" className="landing-btn-ghost text-[10px] px-3 py-1 tracking-wider">DOWNLOAD</a>
           </div>
         </div>
       </nav>
@@ -273,7 +254,6 @@ export default function LandingPage() {
 
             <motion.div className="flex flex-col sm:flex-row gap-3" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 1.15 }}>
               <a href="#download" className="landing-btn-primary px-6 py-2.5 text-xs tracking-wider text-center">DOWNLOAD</a>
-              <a href="#access" className="landing-btn-ghost px-6 py-2.5 text-xs tracking-wider text-center">GET EARLY ACCESS</a>
               <Link href="/surfari" className="landing-btn-surfari px-6 py-2.5 text-xs tracking-wider text-center flex items-center justify-center gap-2">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 12c0 0 3-7 9-7s9 7 9 7-3 7-9 7-9-7-9-7z"/><circle cx="12" cy="12" r="3"/></svg>
                 PLAY SURFARI
@@ -343,7 +323,7 @@ export default function LandingPage() {
             { n: '01', title: 'INSTALL', desc: 'Open .dmg, drag ubongo to Applications', code: null },
             { n: '02', title: 'UNLOCK', desc: 'Run this in Terminal to clear Apple’s quarantine flag (required — macOS blocks unsigned apps):', code: 'xattr -dr com.apple.quarantine /Applications/ubongo.app' },
             { n: '03', title: 'OPEN', desc: 'Launch ubongo from Applications. If blocked, go to System Settings → Privacy & Security → click “Open Anyway”.', code: null },
-            { n: '04', title: 'ACTIVATE', desc: 'Enter your invite code on first launch', code: null },
+            { n: '04', title: 'START', desc: 'Pick a name and a tone, press START and you’re in. No sign-up, no invite code.', code: null },
           ].map((s, i) => (
             <Reveal key={s.n} delay={0.06 + i * 0.04} rotate={i % 2 === 0 ? -1 : 1}>
               <div className="landing-card flex gap-4 items-start">
@@ -383,36 +363,6 @@ export default function LandingPage() {
       </section>
 
       <ScrollLine />
-
-      {/* EARLY ACCESS */}
-      <section id="access" className="py-20 px-6 max-w-5xl mx-auto">
-        <SectionLabel num="005" label="EARLY ACCESS" />
-        <Reveal delay={0.1}>
-          {submitted ? (
-            <motion.div className="landing-card max-w-sm" initial={{ scale: 0.95 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 300, damping: 20 }}>
-              <div className="flex items-center gap-2 mb-2">
-                <motion.span style={{ color: 'var(--l-accent)' }} initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 500, damping: 15, delay: 0.2 }}>&#x2713;</motion.span>
-                <span className="font-mono text-[11px] tracking-wider" style={{ color: 'var(--l-text-strong)' }}>CHECK YOUR INBOX</span>
-              </div>
-              <p className="text-[11px] font-mono" style={{ color: 'var(--l-text-muted)' }}>
-                Your invite code is on its way to <span style={{ color: 'var(--l-text)' }}>{email}</span>. May take a minute.
-              </p>
-            </motion.div>
-          ) : (
-            <div className="max-w-sm">
-              <form onSubmit={submitInvite} className="flex flex-col sm:flex-row gap-2">
-                <input type="email" value={email} onChange={(e) => { setEmail(e.target.value); if (errorMsg) setErrorMsg(null); }}
-                  placeholder="you@example.com" className="landing-input flex-1 px-4 py-2.5 text-[11px] tracking-wider"
-                  disabled={submitting} required />
-                <button type="submit" disabled={submitting} className="landing-btn-primary px-6 py-2.5 text-[11px] tracking-wider whitespace-nowrap disabled:opacity-50">
-                  {submitting ? 'SENDING…' : 'REQUEST'}
-                </button>
-              </form>
-              {errorMsg && <p className="mt-2 text-[10px] font-mono" style={{ color: '#f87171' }}>{errorMsg}</p>}
-            </div>
-          )}
-        </Reveal>
-      </section>
 
       {/* FOOTER */}
       <footer className="py-3 px-6 mt-8" style={{ borderTop: '1px solid var(--l-border)' }}>

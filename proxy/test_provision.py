@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 
 def load(monkeypatch, **env):
-    for k, v in {"INVITE_SECRET": "test-secret", "PROVISION_PER_IP_PER_DAY": "2", "PROVISION_DAILY_CAP": "3", **env}.items():
+    for k, v in {"ANTHROPIC_API_KEY": "sk-ant-test", "VALID_CODES": None, "PROVISION_PER_IP_PER_DAY": "2", "PROVISION_DAILY_CAP": "3", **env}.items():
         if v is None:
             monkeypatch.delenv(k, raising=False)
         else:
@@ -61,8 +61,8 @@ def test_caps_codes_per_day_overall(monkeypatch):
     assert "capacity" in r.json()["detail"]
 
 
-def test_disabled_without_a_secret(monkeypatch):
-    main = load(monkeypatch, INVITE_SECRET=None)
+def test_disabled_without_an_anthropic_key(monkeypatch):
+    main = load(monkeypatch, ANTHROPIC_API_KEY=None)
     r = TestClient(main.app).post("/provision")
     assert r.status_code == 503
 
@@ -70,4 +70,17 @@ def test_disabled_without_a_secret(monkeypatch):
 def test_forged_codes_are_rejected(monkeypatch):
     main = load(monkeypatch)
     r = TestClient(main.app).post("/validate", json={"code": "UBONGO-DEADBEEF-000000"})
+    assert r.status_code == 401
+
+
+def test_keys_stop_working_when_the_anthropic_key_changes(monkeypatch):
+    main = load(monkeypatch)
+    code = TestClient(main.app).post("/provision", headers={"fly-client-ip": "6.6.6.6"}).json()["code"]
+    main = load(monkeypatch, ANTHROPIC_API_KEY="sk-ant-rotated")
+    assert TestClient(main.app).post("/validate", json={"code": code}).status_code == 401
+
+
+def test_no_built_in_codes(monkeypatch):
+    main = load(monkeypatch)
+    r = TestClient(main.app).post("/validate", json={"code": "UBONGO-DEV-0000"})
     assert r.status_code == 401

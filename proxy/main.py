@@ -4,8 +4,9 @@ and Anthropic's Claude API.
 
 Purpose:
   * Hold the merchant Anthropic key server-side (never shipped in the app)
-  * Gate access behind invite codes (beta)
-  * Rate-limit per invite code to cap abuse / cost
+  * Give every desktop install its own access key (POST /provision) — no
+    invite codes, nothing for users or the operator to manage
+  * Rate-limit per install key to cap abuse / cost
   * Forward /v1/messages transparently so the Anthropic SDK in the client
     keeps working with just a `base_url` override
 
@@ -13,19 +14,22 @@ Deployment target: Fly.io (free tier is enough for beta scale).
 
 Endpoints:
   GET  /health              — liveness check
-  POST /validate            — check an invite code, return remaining quota
-  POST /provision           — issue a signed code to a new install (no invite needed)
-  POST /v1/messages         — proxy to Anthropic after code + rate-limit check
+  POST /validate            — check a key, return remaining quota
+  POST /provision           — issue a signed key to a new install
+  POST /v1/messages         — proxy to Anthropic after key + rate-limit check
   GET  /v1/models           — (optional) proxy model list
 
 Secrets (set via `fly secrets set`):
   ANTHROPIC_API_KEY   — real sk-ant-... key
   VALID_CODES         — comma-separated list, e.g. "UBONGO-ALPHA-7X2K,UBONGO-..."
                         (or leave unset and use the built-in dev codes)
-  DAILY_QUERY_LIMIT   — int, default 200 per code per UTC day
-  INVITE_SECRET       — HMAC secret for signed codes (needed for /provision)
-  PROVISION_PER_IP_PER_DAY — codes one network may get per UTC day, default 3
-  PROVISION_DAILY_CAP — codes issued across everyone per UTC day, default 500
+  DAILY_QUERY_LIMIT   — int, default 200 per key per UTC day
+  PROVISION_PER_IP_PER_DAY — keys one network may get per UTC day, default 3
+  PROVISION_DAILY_CAP — keys issued across everyone per UTC day, default 500
+
+Install keys are signed with a key derived from ANTHROPIC_API_KEY, so there
+is no extra secret to set. Rotating the Anthropic key retires every install
+key; the desktop app notices the rejection and gets a new one by itself.
 """
 from __future__ import annotations
 
@@ -56,14 +60,17 @@ GROQ_TRANSCRIBE_MODEL = os.getenv("GROQ_TRANSCRIBE_MODEL", "whisper-large-v3-tur
 
 DAILY_QUERY_LIMIT = int(os.getenv("DAILY_QUERY_LIMIT", "200"))
 
-# Valid invite codes — comma-separated env, or default dev set.
-_raw_codes = os.getenv("VALID_CODES", "UBONGO-ALPHA-7X2K,UBONGO-DEV-0000")
+# Extra fixed keys (comma-separated env), e.g. for testing. None by default:
+# keys hard-coded in this public repo would let anyone spend the Anthropic key.
+_raw_codes = os.getenv("VALID_CODES", "")
 VALID_CODES = {c.strip().upper() for c in _raw_codes.split(",") if c.strip()}
 
-# Shared HMAC secret for self-issued signed codes (from the landing-page
-# /api/request-invite Vercel function). When unset, signed codes are disabled
-# and only the static VALID_CODES list is accepted.
-INVITE_SECRET = os.getenv("INVITE_SECRET", "")
+# Signing key for install keys, derived from the Anthropic key the proxy
+# already holds — no separate secret to configure.
+SIGNING_KEY = (
+    hmac.new(ANTHROPIC_KEY.encode(), b"ubongo-install-keys-v1", hashlib.sha256).hexdigest()
+    if ANTHROPIC_KEY else ""
+)
 
 # Signed-code shape: UBONGO-<8 hex>-<6 hex>, all uppercase.
 # id = 8 hex chars, sig = first 6 hex chars of HMAC-SHA256(secret, id).
@@ -73,7 +80,7 @@ _SIGNED_CODE_SIG_LEN = 6
 
 def _is_signed_code(code: str) -> bool:
     """True if `code` is a well-formed, validly-signed invite code."""
-    if not INVITE_SECRET:
+    if not SIGNING_KEY:
         return False
     parts = code.upper().split("-")
     if len(parts) != 3 or parts[0] != "UBONGO":
@@ -88,7 +95,7 @@ def _is_signed_code(code: str) -> bool:
     except ValueError:
         return False
     expected = (
-        hmac.new(INVITE_SECRET.encode(), id_part.encode(), hashlib.sha256)
+        hmac.new(SIGNING_KEY.encode(), id_part.encode(), hashlib.sha256)
         .hexdigest()[:_SIGNED_CODE_SIG_LEN]
         .upper()
     )
@@ -99,7 +106,7 @@ def _mint_signed_code() -> str:
     """A new signed code, same shape as the ones /api/request-invite emails."""
     id_part = os.urandom(4).hex().upper()
     sig = (
-        hmac.new(INVITE_SECRET.encode(), id_part.encode(), hashlib.sha256)
+        hmac.new(SIGNING_KEY.encode(), id_part.encode(), hashlib.sha256)
         .hexdigest()[:_SIGNED_CODE_SIG_LEN]
         .upper()
     )
@@ -165,6 +172,8 @@ def _extract_code(request: Request, x_api_key: Optional[str]) -> str:
 
 
 def _require_valid_code(code: str) -> None:
+    # The desktop app looks for "invite code" in these 401s to replace a
+    # rejected key by itself — keep that wording.
     if not code:
         raise HTTPException(status_code=401, detail="Missing invite code.")
     if code in VALID_CODES:
@@ -211,9 +220,9 @@ def _client_ip(request: Request) -> str:
 
 @app.post("/provision")
 def provision(request: Request):
-    """Issue a signed code to a fresh install, within the per-network and daily caps."""
-    if not INVITE_SECRET:
-        raise HTTPException(status_code=503, detail="Automatic sign-up isn't enabled on this server.")
+    """Issue a signed key to a fresh install, within the per-network and daily caps."""
+    if not SIGNING_KEY:
+        raise HTTPException(status_code=503, detail="This server has no Anthropic key configured.")
     today = _today_key()
     if _provisioned_total["day"] != today:
         _provisioned_total["day"] = today

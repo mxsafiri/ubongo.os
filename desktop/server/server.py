@@ -144,6 +144,33 @@ def _provision_access(force: bool = False) -> Optional[str]:
         return None
 
 
+def _no_provider_detail() -> str:
+    if not settings.is_onboarded:
+        _provision_in_background()
+        return "Ubongo is still setting up — try again in a few seconds."
+    return ("No AI provider available. Configure an API key in Settings, "
+            "or install Ollama for offline use.")
+
+
+def _access_rejected(text: Optional[str]) -> bool:
+    """True when the ubongo proxy refused this install's code (e.g. it was
+    issued under an old signing key). Only the proxy's own rejection counts:
+    an upstream Anthropic auth error must not make every install re-provision."""
+    t = (text or "").lower()
+    return bool(settings.invite_code) and "401" in t and "invite code" in t
+
+
+def _recover_access() -> str:
+    """Forget a code the proxy no longer accepts and get a fresh one."""
+    global _router, _last_provision_attempt
+    logger.warning("Proxy rejected this install's code — getting a new one")
+    settings.save_partial(invite_code=None)
+    _router = None
+    _last_provision_attempt = 0.0
+    _provision_in_background()
+    return "Ubongo is refreshing its access — try again in a few seconds."
+
+
 def _provision_in_background() -> None:
     if time.time() - _last_provision_attempt >= _PROVISION_RETRY_S:
         threading.Thread(target=_provision_access, daemon=True).start()
@@ -474,11 +501,7 @@ def query(body: QueryRequest):
 
     # Check if provider is actually usable
     if not provider.is_available():
-        raise HTTPException(
-            status_code=503,
-            detail="No AI provider available. Configure an API key in Settings, "
-                   "or install Ollama for offline use.",
-        )
+        raise HTTPException(status_code=503, detail=_no_provider_detail())
 
     history  = [{"role": m.role, "content": m.content} for m in body.history]
 
@@ -494,6 +517,9 @@ def query(body: QueryRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AI provider error: {e}")
+
+    if _access_rejected(response.content):
+        raise HTTPException(status_code=503, detail=_recover_access())
 
     settings.increment_query_count()
 
@@ -520,11 +546,7 @@ def query_agentic(body: QueryRequest):
 
     # Check if provider is actually usable
     if not provider.is_available():
-        raise HTTPException(
-            status_code=503,
-            detail="No AI provider available. Configure an API key in Settings, "
-                   "or install Ollama for offline use.",
-        )
+        raise HTTPException(status_code=503, detail=_no_provider_detail())
 
     executor = get_executor()
     tools    = get_tools_for_tier(settings.effective_tier)
@@ -544,6 +566,9 @@ def query_agentic(body: QueryRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AI provider error: {e}")
+
+    if _access_rejected(response.content):
+        raise HTTPException(status_code=503, detail=_recover_access())
 
     settings.increment_query_count()
 

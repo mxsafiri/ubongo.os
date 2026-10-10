@@ -7,24 +7,25 @@ A thin FastAPI proxy sitting between the ubongo desktop app and Anthropic's Clau
 End users of the ubongo beta don't manage their own Anthropic keys. Instead:
 
 1. We (ubongo) hold the merchant Anthropic key server-side.
-2. Each beta tester gets an **invite code**.
-3. The desktop app sends API calls to this proxy, using the invite code in place of the Anthropic API key.
-4. The proxy validates the code, rate-limits per code, and forwards to real Anthropic with the merchant key.
+2. On first launch every install gets its own **install key** from `POST /provision` — automatically, with no invite code or sign-up.
+3. The desktop app sends API calls to this proxy, using that key in place of the Anthropic API key.
+4. The proxy checks the key, rate-limits per key, and forwards to real Anthropic with the merchant key.
 
 This way:
 - The real Anthropic key is never shipped in the app (no extraction risk).
-- We can revoke a compromised invite code without rebuilding the app.
-- We cap per-tester daily cost so one user can't run up a huge bill.
+- We cap per-install daily cost so one user can't run up a huge bill, and cap how many new keys one network (3/day) and everyone (500/day) can get.
+- There is no extra secret: install keys are signed with a key derived from `ANTHROPIC_API_KEY`. Rotating that key retires every install key, and the app gets a new one by itself.
 
 ## Endpoints
 
 | Method | Path | Purpose |
 |---|---|---|
 | GET  | `/health`       | Liveness check |
-| POST | `/validate`     | Check an invite code, returns quota |
+| POST | `/provision`    | Issue a new install key (rate-limited per network and per day) |
+| POST | `/validate`     | Check an install key, returns quota |
 | POST | `/v1/messages`  | Transparent proxy to Anthropic (drop-in for the SDK) |
 
-The desktop app's `AnthropicProvider` points its SDK `base_url` at this proxy and passes the invite code as `api_key`. The `x-api-key` header the SDK sends is what we read as the invite code.
+The desktop app's `AnthropicProvider` points its SDK `base_url` at this proxy and passes the install key as `api_key`. The `x-api-key` header the SDK sends is what we read as the key.
 
 ## Local dev
 
@@ -43,8 +44,7 @@ Point the desktop app at it via `~/.ubongo/config.json`:
 
 ```json
 {
-  "proxy_url": "http://127.0.0.1:8080",
-  "invite_code": "UBONGO-DEV-0000"
+  "proxy_url": "http://127.0.0.1:8080"
 }
 ```
 
@@ -89,5 +89,5 @@ None of this matters until you have >200 concurrent testers.
 ## Security notes
 
 - Anthropic key is stored as a Fly secret (not in code, not in image). Rotate with `fly secrets set`.
-- No auth beyond the invite code — fine for closed beta. Add real auth (email OTP → JWT) when the product goes paid.
+- No user accounts: anyone who installs the app gets a key, bounded by the per-network, per-day and per-key limits. Add real auth (email OTP → JWT) when the product goes paid.
 - The proxy forwards streaming responses (SSE) unchanged, so the SDK's streaming works transparently.

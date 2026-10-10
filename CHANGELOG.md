@@ -22,6 +22,11 @@ The invite code screen is gone. START waits for the app's server to come
 up and goes straight in. Access sets itself up in the background and
 keeps retrying if ubongo's servers can't be reached, so it never blocks you.
 
+The proxy no longer needs `INVITE_SECRET`: install keys are signed with a
+key derived from its Anthropic key, and the built-in dev codes are gone.
+An install whose key the proxy rejects gets a new one by itself. The
+landing page's "request an invite" form and its email sender are removed.
+
 ## [0.6.1] - 2026-10-10
 
 ### Changed — No invite code needed
