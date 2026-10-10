@@ -70,6 +70,30 @@ class AgentTurn:
 
 def run_turn(
     user_message: str,
+    provider,
+    *,
+    workspace: Optional[Workspace] = None,
+    memory: Optional[SemanticMemory] = None,
+    **kwargs: Any,
+) -> AgentTurn:
+    """Run one agent turn (see ``_run_turn`` for every option).
+
+    When no ``memory`` is passed, the turn opens the workspace's own
+    SemanticMemory and closes it afterwards, so its SQLite file isn't left
+    open (and locked, on Windows) once the turn ends.
+    """
+    if memory is not None:
+        return _run_turn(user_message, provider, workspace=workspace, memory=memory, **kwargs)
+    ws = workspace or load_workspace()
+    mem = SemanticMemory(ws.episodic_dir)
+    try:
+        return _run_turn(user_message, provider, workspace=ws, memory=mem, **kwargs)
+    finally:
+        mem.close()
+
+
+def _run_turn(
+    user_message: str,
     provider,                                # AIProvider — duck-typed
     *,
     history:        Optional[List[Dict[str, Any]]] = None,

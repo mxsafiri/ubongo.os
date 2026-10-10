@@ -31,13 +31,18 @@ jobs:
       - name: Lint with ruff
         run: ruff check assistant_cli/
 
-      - name: Type check with mypy
+      # Blocking for code that is already type-clean; keep it that way
+      - name: Type check (strict areas)
+        run: mypy assistant_cli/memory --ignore-missing-imports
+
+      # The rest of the package still has known type errors (see ROADMAP);
+      # reported here but not yet blocking
+      - name: Type check (whole package, informational)
         run: mypy assistant_cli/ --ignore-missing-imports
         continue-on-error: true
 
       - name: Run tests
         run: pytest -v --tb=short
-        continue-on-error: true
 
   # Build the Mac app exactly as the release does (unsigned): start the
   # packaged server to prove it runs, then build the DMG and keep it as a
