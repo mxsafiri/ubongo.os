@@ -26,6 +26,7 @@ async function getTauriInvoke(): Promise<InvokeFn> {
         get_status: { method: "GET", path: "/status" },
         onboarding_status:   { method: "GET",  path: "/onboarding/status" },
         onboarding_activate: { method: "POST", path: "/onboarding/activate" },
+        onboarding_start:    { method: "POST", path: "/onboarding/start" },
         onboarding_reset:    { method: "POST", path: "/onboarding/reset" },
         toggle_window: null,
         hide_window: null,

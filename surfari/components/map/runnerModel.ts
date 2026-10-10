@@ -18,7 +18,7 @@ import { clamp, damp, dampAngle, spring, stepSpring, wrapAngle, type Spring } fr
 // against the clip. Until the model has loaded — or if it never does — a
 // procedural stand-in is shown, so a rider is never invisible.
 
-export type RideMode = 'board' | 'boda';
+export type RideMode = 'board' | 'boda' | 'foot';
 
 export const RUNNER_MODEL_URL = '/models/rider.glb';
 export const BODA_MODEL_URL = '/models/boda.glb';
@@ -35,7 +35,7 @@ const HEAD_AHEAD = 0.55;       // side-on, the head turns to look down the stree
 const OUTFIT_HUE = 0.4;
 const OUTFIT_HUE_TOL = 0.09;
 
-type Clip = 'Idle' | 'Surf' | 'Jump' | 'Crash' | 'Ride' | 'Whip';
+type Clip = 'Idle' | 'Surf' | 'Jump' | 'Crash' | 'Ride' | 'Whip' | 'Walk' | 'Run';
 
 // Which clip in the model plays each state, and how
 const CLIPS: Record<Clip, { name: string; once?: boolean; speed?: number }> = {
@@ -45,7 +45,13 @@ const CLIPS: Record<Clip, { name: string; once?: boolean; speed?: number }> = {
   Crash: { name: 'Death_A', once: true, speed: 1.5 },
   Ride:  { name: 'Sit_Chair_Idle' },
   Whip:  { name: 'Unarmed_Melee_Attack_Kick', once: true, speed: 1.3 }, // kick back at a chaser
+  Walk:  { name: 'Walking_A' },
+  Run:   { name: 'Running_A' },
 };
+
+/** On foot, `speed` (0…1) above these switches from standing to walking to running. */
+const WALK_AT = 0.04;
+const RUN_AT = 0.45;
 
 interface Rig {
   root: THREE.Object3D;
@@ -252,6 +258,7 @@ function pickClip(speed: number, airborne: boolean, mode: RideMode, crashed: boo
   if (attacking) return 'Whip';          // 2. the strike plays through
   if (mode === 'boda') return 'Ride';    // 3. mounted
   if (airborne) return 'Jump';           // 4. in the air
+  if (mode === 'foot') return speed > RUN_AT ? 'Run' : speed > WALK_AT ? 'Walk' : 'Idle';
   return speed > 0.08 ? 'Surf' : 'Idle'; // 5. on the deck
 }
 
@@ -461,8 +468,9 @@ export function animateCharacter(parts: CharParts, m: MotionInput) {
   group.rotation.y = Math.PI - dyn.heading;
 
   /* ── Whole-body motion, shared by the rig and the stand-in ── */
-  board.visible = !riding;
-  boardStripe.visible = !riding;
+  const onFoot = mode === 'foot';
+  board.visible = !riding && !onFoot;
+  boardStripe.visible = !riding && !onFoot;
   boda.visible = riding;
   if (riding) for (const w of wheels) w.rotation.x -= m.speed * 30 * dt;
 
@@ -474,10 +482,15 @@ export function animateCharacter(parts: CharParts, m: MotionInput) {
   } else {
     body.rotation.x = damp(body.rotation.x, -dyn.pitch.x * 0.35, 12, dt);
   }
-  const swell = isAir || riding ? 0 : Math.sin(m.t * 2.4) * 0.025 * (0.3 + m.speed);
+  const swell = isAir || riding || onFoot ? 0 : Math.sin(m.t * 2.4) * 0.025 * (0.3 + m.speed);
   const judder = riding && !isAir ? Math.abs(Math.sin(m.t * 38)) * 0.01 * m.speed : 0;
   body.position.y = m.jump / m.unitMeters + swell + judder - comp * 0.05;
   board.rotation.z = isAir ? dyn.bank.x * 0.3 : Math.sin(m.t * 1.6) * 0.03;
+  if (onFoot) {
+    // People don't bank like boards: keep upright, with only a slight lean into turns
+    body.rotation.z *= 0.25;
+    body.rotation.x *= 0.3;
+  }
 
   if (!rig) {
     animateFallback(parts.fallback, m.t, m.speed, isAir, riding);
@@ -488,12 +501,15 @@ export function animateCharacter(parts: CharParts, m: MotionInput) {
   setClip(rig, pickClip(m.speed, isAir, mode, crashed, !!m.attacking));
   const action = rig.actions[rig.state!];
   if (rig.state === 'Surf') action.setEffectiveTimeScale(0.6 + m.speed * 0.8);
+  // Stride keeps pace with ground speed so feet don't skate
+  if (rig.state === 'Walk') action.setEffectiveTimeScale(0.7 + m.speed * 4);
+  if (rig.state === 'Run') action.setEffectiveTimeScale(0.8 + (m.speed - RUN_AT) * 1.2);
   rig.mixer.update(dt);
 
   // Squash on impact — volume-preserving-ish, about the feet
   const sq = clamp(comp, -0.4, 1) * 0.09;
   rig.root.scale.set(rig.baseScale * (1 + sq * 0.5), rig.baseScale * (1 - sq), rig.baseScale * (1 + sq * 0.5));
-  rig.root.position.y = riding ? BODA_SEAT : BOARD_TOP;
+  rig.root.position.y = riding ? BODA_SEAT : onFoot ? 0 : BOARD_TOP;
   rig.root.position.z = riding ? BODA_SEAT_Z : 0;
 
   // Side-on to the deck while riding it; the kick twists round to strike

@@ -30,7 +30,7 @@ export interface RunnerLayer extends mapboxgl.CustomLayerInterface {
  * Three.js custom layer rendering the local player's animated runner
  * inside the Mapbox WebGL scene, depth-tested against 3D buildings.
  */
-export function createRunnerLayer(id: string, accentColor: string): RunnerLayer {
+export function createRunnerLayer(id: string, accentColor: string, unitMeters: number = UNIT_METERS): RunnerLayer {
   const state: RunnerState = { lng: 0, lat: 0, heading: 0, speed: 0, lean: 0, jump: 0, mode: 'board', crashed: false };
 
   let renderer: THREE.WebGLRenderer | null = null;
@@ -82,14 +82,14 @@ export function createRunnerLayer(id: string, accentColor: string): RunnerLayer 
         heading: state.heading,
         speed: state.speed,
         jump: state.jump,
-        unitMeters: UNIT_METERS,
+        unitMeters,
         mode: state.mode,
         crashed: state.crashed,
         attacking: state.attacking,
       });
 
       const merc = mapboxgl.MercatorCoordinate.fromLngLat([state.lng, state.lat], 0);
-      const scale = merc.meterInMercatorCoordinateUnits() * UNIT_METERS;
+      const scale = merc.meterInMercatorCoordinateUnits() * unitMeters;
 
       const m = new THREE.Matrix4().fromArray(matrix);
       const l = new THREE.Matrix4()

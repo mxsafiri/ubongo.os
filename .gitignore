@@ -49,7 +49,8 @@ htmlcov/
 *.db
 *.log
 logs/
-memory/
+# Runtime memory data only — not the assistant_cli/memory source package
+/memory/
 cache/
 
 # Node / Frontend

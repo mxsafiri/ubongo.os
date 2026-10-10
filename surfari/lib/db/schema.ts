@@ -107,6 +107,26 @@ async function migrate() {
     )
   `;
 
+  // Work shifts — the server's clock decides stages, cooldowns and pay
+  await sql`
+    CREATE TABLE IF NOT EXISTS shifts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      player_id UUID REFERENCES players(id) ON DELETE CASCADE,
+      job_id VARCHAR(50) NOT NULL,
+      place_id VARCHAR(50) NOT NULL,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ends_at TIMESTAMPTZ NOT NULL,
+      perf INTEGER NOT NULL DEFAULT 50,
+      good_done INTEGER NOT NULL DEFAULT 0,
+      last_used JSONB NOT NULL DEFAULT '{}'::jsonb,
+      finished_at TIMESTAMPTZ,
+      payout INTEGER
+    )
+  `;
+  // One shift at a time
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS shifts_one_open ON shifts(player_id) WHERE finished_at IS NULL`;
+  await sql`CREATE INDEX IF NOT EXISTS shifts_player_job ON shifts(player_id, job_id) WHERE finished_at IS NOT NULL`;
+
   await sql`
     CREATE TABLE IF NOT EXISTS messages (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

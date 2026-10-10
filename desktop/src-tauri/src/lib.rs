@@ -106,6 +106,13 @@ async fn onboarding_activate(code: String) -> Result<serde_json::Value, String> 
     api_request(&client, "POST", "/onboarding/activate", Some(body)).await
 }
 
+/// First launch: get this install its own access code automatically.
+#[tauri::command]
+async fn onboarding_start() -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::new();
+    api_request(&client, "POST", "/onboarding/start", Some(serde_json::json!({}))).await
+}
+
 /// Clear the saved invite code (for testing / rotating).
 #[tauri::command]
 async fn onboarding_reset() -> Result<serde_json::Value, String> {
@@ -314,6 +321,7 @@ pub fn run() {
             get_status,
             onboarding_status,
             onboarding_activate,
+            onboarding_start,
             onboarding_reset,
             toggle_window,
             hide_window,

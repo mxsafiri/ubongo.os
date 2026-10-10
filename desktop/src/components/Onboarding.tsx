@@ -1,12 +1,15 @@
 /**
  * Onboarding — first-launch wizard for beta users.
  *
- * Four steps, in order:
+ * Three steps, in order:
  *
  *   001 · WELCOME   one-breath intro + orb
  *   002 · NAME      user picks what to call the assistant
  *   003 · TONE      conversational register (concise / warm / formal)
- *   004 · INVITE    existing closed-beta invite-code gate
+ *
+ * Finishing TONE gets the install its own access code from the ubongo
+ * proxy (/onboarding/start) — no invite needed. Pasting an invite code is
+ * still possible, but only as a fallback if that automatic setup fails.
  *
  * The first three steps are pure-frontend: choices land in
  * `localStorage['ubongo.profile.v1']` and App.tsx reads them later.
@@ -78,8 +81,9 @@ const STEP_LABELS: Record<Step, string> = {
   1: "WELCOME",
   2: "NAME",
   3: "TONE",
-  4: "INVITE",
+  4: "INVITE", // fallback only — not shown in the ladder
 };
+const LADDER: Step[] = [1, 2, 3];
 
 const NAME_SUGGESTIONS = ["Ubongo", "Mshikaji", "Akili"] as const;
 
@@ -120,13 +124,42 @@ export function Onboarding({ onComplete }: Props) {
 
   const goNext = () => {
     if (step === 2 && !agentName.trim()) return;
-    setStep((s) => (s < 4 ? ((s + 1) as Step) : s));
+    setStep((s) => (s < 3 ? ((s + 1) as Step) : s));
   };
   const goBack = () => {
     setStep((s) => (s > 1 ? ((s - 1) as Step) : s));
   };
 
-  // ── invite activation ────────────────────────────────────────────
+  // ── straight in: get this install its own access ─────────────────
+
+  const handleStart = async () => {
+    setPhase("validating");
+    setError(null);
+    try {
+      const result: any = await invoke("onboarding_start");
+      if (result?.detail) {
+        setError(result.detail);
+        setPhase("error");
+        return;
+      }
+      saveProfile({
+        agentName:   agentName.trim() || "Ubongo",
+        tone,
+        completedAt: Math.floor(Date.now() / 1000),
+      });
+      setPhase("success");
+      setTimeout(onComplete, 700);
+    } catch (err: any) {
+      const msg =
+        typeof err === "string"
+          ? err
+          : err?.message || "Couldn't set up your access. Try again.";
+      setError(msg);
+      setPhase("error");
+    }
+  };
+
+  // ── invite activation (fallback) ─────────────────────────────────
 
   const handleActivate = async () => {
     const trimmed = code.trim();
@@ -182,9 +215,8 @@ export function Onboarding({ onComplete }: Props) {
 
   const StepLadder = () => (
     <div className="flex items-center gap-2 w-full">
-      {(Object.keys(STEP_LABELS) as unknown as Step[]).map((n, idx) => {
-        const num = Number(n) as Step;
-        const active   = num === step;
+      {LADDER.map((num, idx) => {
+        const active   = num === step || (num === 3 && step === 4);
         const complete = num < step;
         return (
           <div key={num} className="flex items-center gap-2 flex-1">
@@ -202,7 +234,7 @@ export function Onboarding({ onComplete }: Props) {
             >
               {STEP_LABELS[num]}
             </span>
-            {idx < 3 && (
+            {idx < LADDER.length - 1 && (
               <div
                 className={`flex-1 h-px ${
                   complete ? "bg-indigo-400/40" : "bg-white/[0.06]"
@@ -250,8 +282,11 @@ export function Onboarding({ onComplete }: Props) {
               agentName={agentName}
               tone={tone}
               onChange={setTone}
-              onNext={goNext}
+              onStart={handleStart}
               onBack={goBack}
+              phase={phase}
+              error={error}
+              onUseCode={() => { setPhase("idle"); setError(null); setStep(4); }}
             />
           )}
           {step === 4 && (
@@ -267,7 +302,7 @@ export function Onboarding({ onComplete }: Props) {
               error={error}
               inputRef={codeInputRef}
               onActivate={handleActivate}
-              onBack={goBack}
+              onBack={() => { setPhase("idle"); setError(null); setStep(3); }}
             />
           )}
         </motion.div>
@@ -308,8 +343,8 @@ function StepWelcome({ onNext }: { onNext: () => void }) {
           An agent you can live with
         </p>
         <p className="text-[13px] text-slate-400 leading-relaxed max-w-[380px] mt-3">
-          Before we activate the beta, let&rsquo;s name your assistant and choose
-          how it should talk. Takes under a minute.
+          Let&rsquo;s name your assistant and choose how it should talk.
+          Takes under a minute.
         </p>
       </div>
 
@@ -424,14 +459,20 @@ function StepTone({
   agentName,
   tone,
   onChange,
-  onNext,
+  onStart,
   onBack,
+  phase,
+  error,
+  onUseCode,
 }: {
   agentName: string;
   tone: Tone;
   onChange: (t: Tone) => void;
-  onNext: () => void;
+  onStart: () => void;
   onBack: () => void;
+  phase: Phase;
+  error: string | null;
+  onUseCode: () => void;
 }) {
   return (
     <div className="flex flex-col gap-5">
@@ -477,7 +518,31 @@ function StepTone({
         })}
       </div>
 
-      <NavRow onBack={onBack} onNext={onNext} nextDisabled={false} />
+      {phase === "error" && error && (
+        <div className="flex flex-col gap-2 rounded-xl border border-rose-400/20 bg-rose-500/[0.05] px-4 py-3">
+          <div className="flex items-start gap-2 text-[12px] text-rose-200 leading-snug">
+            <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+            <span>{error}</span>
+          </div>
+          <button
+            onClick={onUseCode}
+            className="self-start font-mono text-[10px] tracking-[0.2em] text-indigo-300 hover:text-indigo-200"
+          >
+            HAVE AN INVITE CODE? USE IT &rarr;
+          </button>
+        </div>
+      )}
+
+      <NavRow
+        onBack={onBack}
+        onNext={onStart}
+        nextDisabled={phase === "validating" || phase === "success"}
+        nextLabel={
+          phase === "validating" ? "SETTING UP…" : phase === "success" ? "READY" : phase === "error" ? "TRY AGAIN" : "START"
+        }
+        busy={phase === "validating"}
+        done={phase === "success"}
+      />
     </div>
   );
 }
@@ -654,10 +719,16 @@ function NavRow({
   onBack,
   onNext,
   nextDisabled,
+  nextLabel = "CONTINUE",
+  busy = false,
+  done = false,
 }: {
   onBack: () => void;
   onNext: () => void;
   nextDisabled: boolean;
+  nextLabel?: string;
+  busy?: boolean;
+  done?: boolean;
 }) {
   return (
     <div className="flex items-center justify-between pt-1">
@@ -679,8 +750,14 @@ function NavRow({
                    transition-colors group disabled:opacity-40 disabled:cursor-not-allowed
                    disabled:hover:border-white/[0.08] disabled:hover:bg-transparent"
       >
-        CONTINUE
-        <ArrowRight className="w-3.5 h-3.5 text-indigo-300 group-hover:translate-x-0.5 transition-transform" />
+        {nextLabel}
+        {busy ? (
+          <Loader2 className="w-3.5 h-3.5 text-indigo-300 animate-spin" />
+        ) : done ? (
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+        ) : (
+          <ArrowRight className="w-3.5 h-3.5 text-indigo-300 group-hover:translate-x-0.5 transition-transform" />
+        )}
       </button>
     </div>
   );

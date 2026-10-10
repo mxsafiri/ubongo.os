@@ -17,6 +17,11 @@ import { fallbackStyle, hasMapboxToken } from '@/lib/map/fallbackStyle';
 // sooner on phones.
 const loadSurfRun = () => import('./SurfRun');
 const SurfRun = dynamic(() => loadSurfRun().then((m) => m.SurfRun), { ssr: false });
+// Life mode also brings three.js (the character) — same lazy chunk treatment
+const loadLifeMode = () => import('./LifeMode');
+const LifeMode = dynamic(() => loadLifeMode().then((m) => m.LifeMode), { ssr: false });
+let lifeModule: typeof import('./LifeMode') | null = null;
+void loadLifeMode().then((m) => { lifeModule = m; });
 import { selectActiveTab, selectPhase, selectRiding } from '@/store/game';
 
 // Without a token (local dev, UI tests) fall back to a self-contained style
@@ -411,7 +416,6 @@ export default function CityMap() {
   const surfModeRef = useRef(false);
   surfModeRef.current = surfMode;
   const [introFinished, setIntroFinished] = useState(false);
-  const autoRode = useRef(false);
   const introDone = useRef(false);
   const prevOwnersRef = useRef<Map<string, string | null>>(new Map());
   const wanderersRef = useRef<{ lng: number; lat: number; heading: number; speed: number; color: string }[]>([]);
@@ -508,9 +512,9 @@ export default function CityMap() {
 
       // Empty-map click → drop a plant-site target (build-your-own-turf flow).
       // Zone layer clicks take priority; only open plant mode on bare ground.
-      // Disabled while riding in Surf Run.
+      // Disabled while riding in Surf Run, and in life mode (a tap walks you there).
       map.on('click', (e) => {
-        if (surfModeRef.current) return;
+        if (surfModeRef.current || lifeModule?.isLifeActive()) return;
         const hits = map.queryRenderedFeatures(e.point, { layers: ['zones-core', 'zones-beam'] });
         if (hits.length > 0) return;
         const state = useGameStore.getState();
@@ -704,37 +708,28 @@ export default function CityMap() {
 
   const player = useGameStore((s) => s.player);
 
-  // Riding is the home screen: once the intro flight lands and the player
-  // is in, drop straight into a ride (once per visit — after pausing, the
-  // map stays until they choose to ride again)
-  useEffect(() => {
-    if (autoRode.current || !introFinished || !mapObj || !player || phase !== 'exploring') return;
-    autoRode.current = true;
-    setSurfMode(true);
-  }, [introFinished, mapObj, player, phase, setSurfMode]);
-
   return (
     <div className="absolute inset-0" style={{ background: '#0A0E1A' }}>
       <div ref={mapContainer} className="absolute inset-0 w-full h-full" />
 
-      {/* Ride — drop back into Cruise Mode from the map */}
-      {player && mapObj && !surfMode && (
+      {/* Life: your character in the city, places to go, work to do */}
+      {introFinished && mapObj && player && phase === 'exploring' && !surfMode && <LifeMode map={mapObj} />}
+
+      {/* Back to your character after looking around */}
+      {introFinished && mapObj && player && !surfMode && (
         <button
-          onClick={() => setSurfMode(true)}
-          className="absolute z-30 flex items-center gap-2 px-4 py-3"
+          onClick={() => window.dispatchEvent(new Event('surfari:recenter'))}
+          className="absolute z-[25] flex items-center justify-center"
           style={{
-            left: 16, // the chat button owns the right corner
+            left: 16,
             bottom: 'calc(var(--screen-pad-bottom, 24px) + 16px)',
-            borderRadius: 14,
-            background: 'linear-gradient(135deg, rgba(0,224,150,0.95), rgba(0,194,255,0.95))',
-            boxShadow: '0 6px 22px rgba(0,0,0,0.45), 0 0 24px rgba(0,224,150,0.3)',
+            width: 44, height: 44, borderRadius: 12,
+            background: 'rgba(9,13,24,0.85)', border: '1px solid rgba(0,194,255,0.45)',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.4)', color: '#00C2FF', fontSize: 20,
           }}
-          aria-label="Start riding"
+          aria-label="Back to my character"
         >
-          <span style={{ fontSize: '18px', lineHeight: 1 }}>🏄</span>
-          <span style={{ fontFamily: 'var(--font-arcade)', fontSize: '18px', letterSpacing: '0.14em', color: '#04121C', lineHeight: 1 }}>
-            RIDE
-          </span>
+          ⌖
         </button>
       )}
 
