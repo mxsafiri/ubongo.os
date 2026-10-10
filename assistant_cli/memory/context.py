@@ -18,7 +18,8 @@ def _home_relative(path: str) -> str:
     return "~" + path[len(home):] if path.startswith(home) else path
 
 
-def _size(n: int) -> str:
+def _size(size_bytes: int) -> str:
+    n = float(size_bytes)
     for unit in ("B", "KB", "MB", "GB"):
         if n < 1024:
             return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"

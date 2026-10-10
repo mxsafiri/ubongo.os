@@ -124,7 +124,7 @@ class MemoryStore:
     @property
     def count(self) -> int:
         with self._lock:
-            return self._conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+            return int(self._conn.execute("SELECT COUNT(*) FROM files").fetchone()[0])
 
     def search(
         self,

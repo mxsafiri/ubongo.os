@@ -8,7 +8,7 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import Iterable, Iterator, Optional
+from typing import Any, Iterable, Iterator, Optional
 
 from assistant_cli.memory.store import MemoryStore, file_record
 
@@ -89,7 +89,7 @@ class FileWatcher:
     def __init__(self, store: MemoryStore, roots: Optional[Iterable[str | Path]] = None):
         self.store = store
         self.roots = [Path(r).expanduser() for r in roots] if roots is not None else default_roots()
-        self._observer = None
+        self._observer: Any = None
         self._scan_lock = threading.Lock()
 
     @property
@@ -138,6 +138,7 @@ class FileWatcher:
             self._observer = None
 
 
+_Base: Any
 try:
     from watchdog.events import FileSystemEventHandler as _Base
 except ImportError:  # watcher degrades to scan-only
