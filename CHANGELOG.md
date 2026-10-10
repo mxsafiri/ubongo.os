@@ -5,6 +5,20 @@ All notable changes to Ubongo OS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added — Ubongo reads inside your documents
+
+Ask "what does my Kariakoo lease say about rent?" and Ubongo finds the
+document, reads it and answers, naming the file it used.
+
+- Text from PDFs, Word, PowerPoint, Excel, OpenDocument, text, Markdown,
+  CSV and HTML files is indexed on your Mac (SQLite full-text search), so
+  search also matches what documents *say*, with a snippet of the match.
+- New `read_file` tool, limited to your home folder.
+- Questions can now take several steps (search → read → answer) instead
+  of one round of tools.
+
 ## [0.6.2] - 2026-10-10
 
 ### Fixed — The app's server starts again

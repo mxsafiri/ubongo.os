@@ -210,6 +210,58 @@ class AnthropicProvider(AIProvider):
                 model_used="",
             )
 
+    def continue_with_tools(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        system_prompt: Optional[str] = None,
+        model_hint: str = "",
+        allow_tools: bool = True,
+    ) -> AIResponse:
+        """
+        Continue a tool conversation already in progress: `messages` holds
+        the user turn, Claude's earlier tool_use turns and the tool_result
+        turns. Claude may answer, or ask for more tools (multi-step tasks
+        like "find the contract, then read it"). With allow_tools=False it
+        must answer now (the tools stay defined, as the API requires once
+        tool turns are in the conversation).
+        """
+        try:
+            model = self._select_model(model_hint, use_tools=True)
+            extra: Dict[str, Any] = {} if allow_tools else {"tool_choice": {"type": "none"}}
+            response = self.client.messages.create(
+                model=model,
+                max_tokens=4096,
+                system=system_prompt or _UBONGO_SYSTEM,
+                tools=tools,
+                messages=messages,
+                **extra,
+            )
+            text_parts: List[str] = []
+            tool_calls: List[ToolCall] = []
+            for block in response.content:
+                if block.type == "text":
+                    text_parts.append(block.text)
+                elif block.type == "tool_use":
+                    tool_calls.append(ToolCall(id=block.id, name=block.name, input=block.input))
+            return AIResponse(
+                content=" ".join(text_parts),
+                tool_calls=tool_calls,
+                stop_reason=response.stop_reason or "end_turn",
+                model_used=model,
+                provider_name=self.name,
+                input_tokens=response.usage.input_tokens,
+                output_tokens=response.usage.output_tokens,
+            )
+        except Exception as e:
+            logger.error("Anthropic tool continuation error: %s", e)
+            return AIResponse(
+                content=f"[anthropic error] {e}",
+                provider_name=self.name,
+                stop_reason="error",
+                model_used="",
+            )
+
     def send_tool_results(
         self,
         original_message: str,

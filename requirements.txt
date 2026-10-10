@@ -11,6 +11,7 @@ ollama>=0.4.0            # Local models — offline fallback
 
 # Memory layer
 watchdog>=4.0.0          # Real-time filesystem watcher
+pypdf>=4.0.0             # Read text inside PDFs (find & summarise)
 
 # Desktop app server
 fastapi>=0.115.0

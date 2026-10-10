@@ -532,6 +532,9 @@ def query(body: QueryRequest):
     )
 
 
+_MAX_TOOL_ROUNDS = 6
+
+
 @app.post("/query/agentic", response_model=AgentResponse)
 def query_agentic(body: QueryRequest):
     """
@@ -575,10 +578,18 @@ def query_agentic(body: QueryRequest):
     steps: List[AgentStep] = []
     cards: List[ResponseCard] = []
 
-    # ── Step 2: execute each tool call ────────────────────────────────
-    if response.has_tool_calls:
-        tool_results = []
+    # ── Step 2: run the tools Claude asks for, round after round ──────
+    # Multi-step jobs ("find the contract, then tell me what it says") need
+    # several rounds: search → read → answer.
+    system_prompt = _build_system_prompt(memory_context)
+    can_continue = hasattr(provider, "continue_with_tools")
+    messages: List[dict] = [*history, {"role": "user", "content": body.message}]
+    final_text = response.content
+    rounds = 0
 
+    while response.has_tool_calls:
+        rounds += 1
+        tool_results = []
         for tc in response.tool_calls:
             exec_result = _execute_tool(executor, tc.name, tc.input)
             steps.append(AgentStep(
@@ -591,26 +602,53 @@ def query_agentic(body: QueryRequest):
                 "tool_use_id": tc.id,
                 "content": exec_result.message,
             })
-
-            # Build a rich card from this tool result
             card = _build_card_from_tool(tc.name, tc.input, exec_result)
             if card:
                 cards.append(card)
 
-        # ── Step 3: send results back to AI for final reply ───────────
-        if hasattr(provider, "send_tool_results"):
-            final = provider.send_tool_results(
-                original_message=body.message,
-                tool_calls=response.tool_calls,
-                tool_results=tool_results,
-                tools=tools,
-                history=history if history else None,
+        if not can_continue:
+            # Providers without multi-round support get one follow-up
+            if hasattr(provider, "send_tool_results"):
+                final = provider.send_tool_results(
+                    original_message=body.message,
+                    tool_calls=response.tool_calls,
+                    tool_results=tool_results,
+                    tools=tools,
+                    history=history if history else None,
+                )
+                final_text = final.content
+            else:
+                final_text = response.content or _summarise_steps(steps)
+            break
+
+        assistant_blocks: List[dict] = []
+        if response.content:
+            assistant_blocks.append({"type": "text", "text": response.content})
+        assistant_blocks += [
+            {"type": "tool_use", "id": tc.id, "name": tc.name, "input": tc.input}
+            for tc in response.tool_calls
+        ]
+        messages.append({"role": "assistant", "content": assistant_blocks})
+        messages.append({"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": r["tool_use_id"], "content": r["content"]}
+            for r in tool_results
+        ]})
+
+        if rounds >= _MAX_TOOL_ROUNDS:
+            # Out of rounds: ask for an answer from what it has, no more tools
+            response = provider.continue_with_tools(
+                messages=messages, tools=tools, system_prompt=system_prompt,
+                model_hint=body.message, allow_tools=False,
             )
-            final_text = final.content
-        else:
             final_text = response.content or _summarise_steps(steps)
-    else:
+            break
+        response = provider.continue_with_tools(
+            messages=messages, tools=tools, system_prompt=system_prompt, model_hint=body.message,
+        )
         final_text = response.content
+
+    if not final_text and steps:
+        final_text = _summarise_steps(steps)
 
     return AgentResponse(
         content  = final_text,
@@ -959,7 +997,10 @@ def _build_system_prompt(memory_context: str) -> str:
         "TOOL USE RULES (follow strictly):\n"
         "- News/events/updates → ALWAYS call web_search with search_type='news'. NEVER make up news.\n"
         "- General questions needing current info → call web_search with search_type='web'.\n"
-        "- Find files → ALWAYS call memory_search.\n"
+        "- Find files → ALWAYS call memory_search (it also matches words inside documents).\n"
+        "- What a file says / summarise / answer from a document → memory_search to find it, "
+        "then read_file on the best match. Answer from the text you read and name the file. "
+        "Never guess a document's contents.\n"
         "- System status → ALWAYS call system_info.\n"
         "- Play/control music → ALWAYS call music_control.\n"
         "- Open/close apps → ALWAYS call app_control.\n"
@@ -983,6 +1024,49 @@ def _wrap_dict_as_execution(result: dict, *, default_msg: str, success: Optional
         return ExecutionResult(success=False, message=str(err), data=result, error=str(err))
     ok = success if success is not None else True
     return ExecutionResult(success=ok, message=default_msg, data=result, error=None)
+
+
+def _read_file_tool(tool_input: dict):
+    """The text of one of the user's documents, for Claude to summarise or
+    quote. Only files inside the user's home folder can be read."""
+    from assistant_cli.memory import extract_text
+    from assistant_cli.models import ExecutionResult
+
+    raw = str(tool_input.get("path") or "").strip()
+    try:
+        max_chars = int(tool_input.get("max_chars") or 20_000)
+    except (TypeError, ValueError):
+        max_chars = 20_000
+    max_chars = max(1_000, min(max_chars, 60_000))
+
+    def fail(msg: str):
+        return ExecutionResult(success=False, message=msg, data=None, error=msg)
+
+    if not raw:
+        return fail("No file path given.")
+    path = Path(os.path.expanduser(raw)).resolve()
+    home = Path.home().resolve()
+    if path != home and home not in path.parents:
+        return fail("I can only read files inside your home folder.")
+    if not path.is_file():
+        return fail(f"File not found: {raw}")
+
+    text = extract_text(path, max_chars=max_chars + 1)
+    if not text:
+        return fail(
+            f"I can't read the text of {path.name}. It may be a scan, an image, "
+            "or a format I don't support yet."
+        )
+    truncated = len(text) > max_chars
+    text = text[:max_chars]
+    short = str(path).replace(str(home), "~", 1)
+    header = f"File: {path.name} ({short})" + (f" — first {max_chars:,} characters" if truncated else "")
+    return ExecutionResult(
+        success=True,
+        message=f"{header}\n\n{text}",
+        data={"path": str(path), "name": path.name, "chars": len(text), "truncated": truncated},
+        error=None,
+    )
 
 
 def _execute_tool(executor: CommandExecutor, tool_name: str, tool_input: dict):
@@ -1018,6 +1102,8 @@ def _execute_tool(executor: CommandExecutor, tool_name: str, tool_input: dict):
                 home = str(Path.home())
                 short = path.replace(home, "~")
                 lines.append(f"  • {name} ({_size_str(size)}) → {short}")
+                if f.get("snippet"):
+                    lines.append(f"      says: {f['snippet']}")
 
             return ExecutionResult(
                 success=True,
@@ -1025,6 +1111,10 @@ def _execute_tool(executor: CommandExecutor, tool_name: str, tool_input: dict):
                 data={"files": results, "count": len(results)},
                 error=None,
             )
+
+        # ── Read a document's text ───────────────────────────────────
+        if tool_name == "read_file":
+            return _read_file_tool(tool_input)
 
         # ── File operations ──────────────────────────────────────────
         if tool_name == "file_operation":

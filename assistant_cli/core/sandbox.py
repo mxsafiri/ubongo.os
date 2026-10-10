@@ -90,6 +90,7 @@ TOOL_RISK: Dict[str, RiskLevel] = {
 
     # file index (read-only — searches metadata, doesn't touch disk)
     "memory_search":  RiskLevel.SAFE,
+    "read_file":      RiskLevel.SAFE,
 
     # system probes
     "system_info":    RiskLevel.SAFE,

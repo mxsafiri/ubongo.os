@@ -241,17 +241,19 @@ UBONGO_TOOLS: List[Dict[str, Any]] = [
     {
         "name": "memory_search",
         "description": (
-            "Search the user's indexed files by name, type, category, "
-            "recency, or directory. The file index is always up to date — "
-            "use this instead of scanning the filesystem manually. "
-            "Returns file paths, sizes, and modification dates."
+            "Search the user's files by name, type, category, recency or "
+            "directory, and by what documents say: words in the query also "
+            "match the text inside PDFs, Word, PowerPoint, Excel and text "
+            "files (those results include a snippet). The index is always up "
+            "to date — use this instead of scanning the filesystem. Returns "
+            "paths, sizes and modification dates."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Free-text search on filenames and paths.",
+                    "description": "Words to find in file names, paths or document text.",
                 },
                 "category": {
                     "type": "string",
@@ -280,6 +282,31 @@ UBONGO_TOOLS: List[Dict[str, Any]] = [
                 },
             },
             "required": [],
+        },
+    },
+
+    # ── READ FILE ───────────────────────────────────────────────────
+    {
+        "name": "read_file",
+        "description": (
+            "Read the text of a document on the user's Mac — PDF, Word, "
+            "PowerPoint, Excel, OpenDocument, text, Markdown, CSV or HTML — "
+            "so you can summarise it or answer questions about it. Use the "
+            "path from memory_search. Always name the file you read in your answer."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute path (or ~/…) of the file to read.",
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "description": "How much text to return (default 20000, max 60000).",
+                },
+            },
+            "required": ["path"],
         },
     },
 
@@ -693,7 +720,7 @@ def get_tools_for_tier(tier: str) -> List[Dict[str, Any]]:
     """
     basic_tools = {
         "file_operation", "app_control", "system_info",
-        "memory_search", "memory_recall", "memory_save", "memory_forget",
+        "memory_search", "read_file", "memory_recall", "memory_save", "memory_forget",
         "web_search", "screen_control", "load_skill", "sessions_spawn",
         "canvas_emit", "learning_suggest", "reflection_log",
         "cron_create", "cron_list", "cron_delete",
