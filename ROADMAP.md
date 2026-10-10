@@ -45,7 +45,7 @@ Swahili, and it actually gets done on their Mac.
 - [x] Download links always point to the newest DMG
 - [x] `scripts/run-local.sh`: run the app from source in one command
 - [ ] Deploy the proxy: `cd proxy && fly deploy` *(Victor)*
-- [ ] Release 0.6.2: Actions → Release → Run workflow → `0.6.2` *(Victor)*
+- [ ] Release 0.7.0 (find & summarise, write & reply, voice): Actions → Release → Run workflow → `0.7.0` *(Victor)*
 - [ ] Signing + notarization *(workflow ready; needs NEDApay's Apple secrets, see `docs/RELEASING.md`)*
 - [ ] Auto-update with the Tauri updater *(needs an updater public key, see `docs/RELEASING.md`)*
 - [x] Every merge builds a test DMG on macOS (CI artifact `ubongo-dmg`)
