@@ -5,7 +5,11 @@ All notable changes to Ubongo OS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-10-10
+
+The first release since 0.6.1. It also includes everything listed under
+0.6.2 below (the fixed app server and no invite codes), which was never
+published on its own.
 
 ### Improved — Voice in Kiswahili and English
 
