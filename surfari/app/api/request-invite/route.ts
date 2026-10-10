@@ -22,7 +22,8 @@ function generateCode(secret: string): string {
   return `UBONGO-${id}-${sig}`;
 }
 
-const DMG_URL = 'https://github.com/mxsafiri/ubongo.os/releases/latest/download/ubongo_0.6.0_aarch64.dmg';
+// The latest release page — always current, unlike a versioned DMG file name
+const DMG_URL = 'https://github.com/mxsafiri/ubongo.os/releases/latest';
 
 function plainBody(code: string): string {
   return `Welcome to Ubongo.\n\nYour invite code:\n${code}\n\nDOWNLOAD (macOS Apple Silicon):\n${DMG_URL}\n\nINSTALL:\n1. Open the .dmg and drag ubongo to Applications.\n2. Run in Terminal: xattr -dr com.apple.quarantine /Applications/ubongo.app\n3. Launch ubongo and paste the invite code.\n\nReply with any feedback — I read every message.`;
