@@ -4,13 +4,50 @@ on:
   push:
     tags:
       - "v*"
+  # "Run workflow" button on the Actions tab: tags the commit it runs on as
+  # v<version> and publishes the release, without pushing a tag by hand.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.6.1 (must match desktop/src-tauri/tauri.conf.json)"
+        required: true
 
 permissions:
   contents: write
 
 jobs:
+  # ── Check the version before spending time on builds ───────────
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve tag and check it matches the app version
+        id: tag
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG="v${INPUT_VERSION#v}"
+          else
+            TAG="$GITHUB_REF_NAME"
+          fi
+          APP=$(python3 -c "import json; print(json.load(open('desktop/src-tauri/tauri.conf.json'))['version'])")
+          if [ "$TAG" != "v$APP" ]; then
+            echo "::error::Tag $TAG does not match tauri.conf.json version $APP"
+            exit 1
+          fi
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            echo "::error::Tag $TAG already exists — bump the version first"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
   # ── Build Python package (wheel + sdist) ───────────────────────
   python-package:
+    needs: preflight
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,6 +77,7 @@ jobs:
 
   # ── Build standalone binaries per platform ─────────────────────
   binaries:
+    needs: preflight
     strategy:
       matrix:
         include:
@@ -75,6 +113,7 @@ jobs:
 
   # ── Build Tauri desktop app + DMG (macOS only) ─────────────────
   tauri-dmg:
+    needs: preflight
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -145,7 +184,7 @@ jobs:
 
   # ── Create GitHub Release with all artifacts ───────────────────
   release:
-    needs: [python-package, binaries, tauri-dmg]
+    needs: [preflight, python-package, binaries, tauri-dmg]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -160,6 +199,9 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          # On a manual run this creates the tag at the commit that was built
+          tag_name: ${{ needs.preflight.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           files: artifacts/*
           generate_release_notes: true
           body: |
