@@ -139,7 +139,11 @@ jobs:
       - name: Install Python server deps + PyInstaller
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]" || pip install -e .
+          # requirements.txt holds the server's own deps (fastapi, uvicorn,
+          # anthropic…) — pyproject.toml alone doesn't, and v0.6.1 shipped
+          # a server that crashed on launch because of it.
+          pip install -r requirements.txt
+          pip install -e .
           pip install pyinstaller
 
       - name: Build Python sidecar (ubongo-server)
@@ -155,6 +159,9 @@ jobs:
           test -d desktop/src-tauri/binaries/ubongo-server/_internal
           ls -lh desktop/src-tauri/binaries/ubongo-server/ubongo-server
           du -sh desktop/src-tauri/binaries/ubongo-server/_internal
+
+      - name: Smoke-test the bundled server
+        run: scripts/smoke_server.sh desktop/src-tauri/binaries/ubongo-server/ubongo-server
 
       - name: Install frontend dependencies
         run: npm ci

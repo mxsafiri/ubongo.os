@@ -7,9 +7,10 @@
  *   002 · NAME      user picks what to call the assistant
  *   003 · TONE      conversational register (concise / warm / formal)
  *
- * Finishing TONE gets the install its own access code from the ubongo
- * proxy (/onboarding/start) — no invite needed. Pasting an invite code is
- * still possible, but only as a fallback if that automatic setup fails.
+ * START waits for the local server to come up (first launch can take a
+ * few seconds), asks it to set up access (/onboarding/start) and goes
+ * straight in. There are no invite codes, and access never blocks the
+ * user: if it can't be set up yet, the server keeps retrying on its own.
  *
  * The first three steps are pure-frontend: choices land in
  * `localStorage['ubongo.profile.v1']` and App.tsx reads them later.
@@ -24,7 +25,6 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
-  KeyRound,
   Loader2,
   CheckCircle2,
   AlertCircle,
@@ -74,14 +74,13 @@ function saveProfile(p: OnboardingProfile) {
 
 // ── step state ──────────────────────────────────────────────────────
 
-type Step = 1 | 2 | 3 | 4;
+type Step = 1 | 2 | 3;
 type Phase = "idle" | "validating" | "success" | "error";
 
 const STEP_LABELS: Record<Step, string> = {
   1: "WELCOME",
   2: "NAME",
   3: "TONE",
-  4: "INVITE", // fallback only — not shown in the ladder
 };
 const LADDER: Step[] = [1, 2, 3];
 
@@ -104,18 +103,15 @@ export function Onboarding({ onComplete }: Props) {
   const [agentName, setAgentName] = useState<string>("Ubongo");
   const [tone, setTone]           = useState<Tone>("concise");
 
-  const [code, setCode]           = useState("");
   const [phase, setPhase]         = useState<Phase>("idle");
   const [error, setError]         = useState<string | null>(null);
 
   const nameInputRef = useRef<HTMLInputElement>(null);
-  const codeInputRef = useRef<HTMLInputElement>(null);
 
   // Focus the right field when each step mounts.
   useEffect(() => {
     const t = setTimeout(() => {
       if (step === 2) nameInputRef.current?.focus();
-      if (step === 4) codeInputRef.current?.focus();
     }, 180);
     return () => clearTimeout(t);
   }, [step]);
@@ -130,78 +126,42 @@ export function Onboarding({ onComplete }: Props) {
     setStep((s) => (s > 1 ? ((s - 1) as Step) : s));
   };
 
-  // ── straight in: get this install its own access ─────────────────
+  // ── straight in ──────────────────────────────────────────────────
 
   const handleStart = async () => {
     setPhase("validating");
     setError(null);
-    try {
-      const result: any = await invoke("onboarding_start");
-      if (result?.detail) {
-        setError(result.detail);
-        setPhase("error");
-        return;
+
+    // The local server can take a few seconds to boot on first launch.
+    const deadline = Date.now() + 60_000;
+    for (;;) {
+      try {
+        await invoke("onboarding_status");
+        break;
+      } catch {
+        if (Date.now() > deadline) {
+          setError("Ubongo's engine didn't start. Quit the app (⌘Q), open it again and press START.");
+          setPhase("error");
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 1000));
       }
-      saveProfile({
-        agentName:   agentName.trim() || "Ubongo",
-        tone,
-        completedAt: Math.floor(Date.now() / 1000),
-      });
-      setPhase("success");
-      setTimeout(onComplete, 700);
-    } catch (err: any) {
-      const msg =
-        typeof err === "string"
-          ? err
-          : err?.message || "Couldn't set up your access. Try again.";
-      setError(msg);
-      setPhase("error");
-    }
-  };
-
-  // ── invite activation (fallback) ─────────────────────────────────
-
-  const handleActivate = async () => {
-    const trimmed = code.trim();
-    if (!trimmed) {
-      setError("Paste your invite code first.");
-      setPhase("error");
-      return;
     }
 
-    setPhase("validating");
-    setError(null);
-
+    // Set up access if we can — if not, the server keeps retrying on its own.
     try {
-      const result: any = await invoke("onboarding_activate", { code: trimmed });
-      if (result?.detail) {
-        setError(result.detail);
-        setPhase("error");
-        return;
-      }
-      // Persist name + tone alongside successful activation.
-      saveProfile({
-        agentName:   agentName.trim() || "Ubongo",
-        tone,
-        completedAt: Math.floor(Date.now() / 1000),
-      });
-      setPhase("success");
-      setTimeout(onComplete, 900);
-    } catch (err: any) {
-      const msg =
-        typeof err === "string"
-          ? err
-          : err?.message || "Could not validate invite code. Try again.";
-      setError(msg);
-      setPhase("error");
+      await invoke("onboarding_start");
+    } catch {
+      /* never block the user on this */
     }
-  };
 
-  const onCodeKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && phase !== "validating") {
-      e.preventDefault();
-      handleActivate();
-    }
+    saveProfile({
+      agentName:   agentName.trim() || "Ubongo",
+      tone,
+      completedAt: Math.floor(Date.now() / 1000),
+    });
+    setPhase("success");
+    setTimeout(onComplete, 700);
   };
 
   const onNameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -216,7 +176,7 @@ export function Onboarding({ onComplete }: Props) {
   const StepLadder = () => (
     <div className="flex items-center gap-2 w-full">
       {LADDER.map((num, idx) => {
-        const active   = num === step || (num === 3 && step === 4);
+        const active   = num === step;
         const complete = num < step;
         return (
           <div key={num} className="flex items-center gap-2 flex-1">
@@ -286,23 +246,6 @@ export function Onboarding({ onComplete }: Props) {
               onBack={goBack}
               phase={phase}
               error={error}
-              onUseCode={() => { setPhase("idle"); setError(null); setStep(4); }}
-            />
-          )}
-          {step === 4 && (
-            <StepInvite
-              agentName={agentName}
-              code={code}
-              onChangeCode={(v) => {
-                setCode(v.toUpperCase());
-                if (phase === "error") setPhase("idle");
-              }}
-              onKeyDown={onCodeKeyDown}
-              phase={phase}
-              error={error}
-              inputRef={codeInputRef}
-              onActivate={handleActivate}
-              onBack={() => { setPhase("idle"); setError(null); setStep(3); }}
             />
           )}
         </motion.div>
@@ -463,7 +406,6 @@ function StepTone({
   onBack,
   phase,
   error,
-  onUseCode,
 }: {
   agentName: string;
   tone: Tone;
@@ -472,7 +414,6 @@ function StepTone({
   onBack: () => void;
   phase: Phase;
   error: string | null;
-  onUseCode: () => void;
 }) {
   return (
     <div className="flex flex-col gap-5">
@@ -524,12 +465,6 @@ function StepTone({
             <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
             <span>{error}</span>
           </div>
-          <button
-            onClick={onUseCode}
-            className="self-start font-mono text-[10px] tracking-[0.2em] text-indigo-300 hover:text-indigo-200"
-          >
-            HAVE AN INVITE CODE? USE IT &rarr;
-          </button>
         </div>
       )}
 
@@ -538,177 +473,11 @@ function StepTone({
         onNext={onStart}
         nextDisabled={phase === "validating" || phase === "success"}
         nextLabel={
-          phase === "validating" ? "SETTING UP…" : phase === "success" ? "READY" : phase === "error" ? "TRY AGAIN" : "START"
+          phase === "validating" ? "STARTING…" : phase === "success" ? "READY" : phase === "error" ? "TRY AGAIN" : "START"
         }
         busy={phase === "validating"}
         done={phase === "success"}
       />
-    </div>
-  );
-}
-
-function StepInvite({
-  agentName,
-  code,
-  onChangeCode,
-  onKeyDown,
-  phase,
-  error,
-  inputRef,
-  onActivate,
-  onBack,
-}: {
-  agentName: string;
-  code: string;
-  onChangeCode: (v: string) => void;
-  onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
-  phase: Phase;
-  error: string | null;
-  inputRef: React.Ref<HTMLInputElement>;
-  onActivate: () => void;
-  onBack: () => void;
-}) {
-  return (
-    <div className="flex flex-col gap-5">
-      <SectionLabel num="004" label="INVITE" />
-
-      <div className="flex flex-col gap-2">
-        <h2 className="text-[18px] font-semibold tracking-tight text-slate-100">
-          One last thing — your invite code.
-        </h2>
-        <p className="text-[12px] text-slate-400 leading-relaxed max-w-[440px]">
-          {agentName.trim() || "Ubongo"} is in closed beta. Paste the code
-          we sent you and we&rsquo;ll bring it online.
-        </p>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <label className="text-[10px] font-mono uppercase tracking-[0.2em] text-slate-500 pl-1">
-          Invite code
-        </label>
-
-        <div
-          className={`
-            relative flex items-center gap-2.5 rounded-xl border px-3.5 py-3
-            transition-colors
-            ${phase === "error"
-              ? "border-rose-500/40 bg-rose-500/[0.04]"
-              : phase === "success"
-              ? "border-emerald-500/40 bg-emerald-500/[0.04]"
-              : "border-white/[0.08] bg-white/[0.02] focus-within:border-indigo-400/50 focus-within:bg-indigo-500/[0.04]"}
-          `}
-        >
-          <KeyRound className="w-4 h-4 text-slate-500 shrink-0" />
-          <input
-            ref={inputRef}
-            type="text"
-            value={code}
-            onChange={(e) => onChangeCode(e.target.value)}
-            onKeyDown={onKeyDown}
-            placeholder="UBONGO-XXXX-XXXX"
-            disabled={phase === "validating" || phase === "success"}
-            spellCheck={false}
-            autoComplete="off"
-            className="flex-1 bg-transparent outline-none border-0
-                       text-[15px] font-mono tracking-wider text-slate-100
-                       placeholder:text-slate-600 placeholder:font-sans placeholder:tracking-normal
-                       disabled:opacity-60"
-          />
-
-          <AnimatePresence mode="wait">
-            {phase === "validating" && (
-              <motion.div key="v" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                <Loader2 className="w-4 h-4 text-indigo-400 animate-spin" />
-              </motion.div>
-            )}
-            {phase === "success" && (
-              <motion.div key="s" initial={{ opacity: 0, scale: 0.5 }} animate={{ opacity: 1, scale: 1 }}>
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              </motion.div>
-            )}
-            {phase === "error" && (
-              <motion.div key="e" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                <AlertCircle className="w-4 h-4 text-rose-400" />
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
-        <AnimatePresence>
-          {error && phase === "error" && (
-            <motion.p
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              className="text-[12px] text-rose-400 pl-1"
-            >
-              {error}
-            </motion.p>
-          )}
-        </AnimatePresence>
-      </div>
-
-      <div className="flex items-center justify-between gap-3 pt-1">
-        <button
-          onClick={onBack}
-          disabled={phase === "validating" || phase === "success"}
-          className="inline-flex items-center gap-1.5 font-mono text-[11px] tracking-[0.2em]
-                     text-slate-500 hover:text-slate-300 transition-colors disabled:opacity-40"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          BACK
-        </button>
-
-        <button
-          onClick={onActivate}
-          disabled={phase === "validating" || phase === "success" || !code.trim()}
-          className="inline-flex items-center justify-center gap-2
-                     rounded-xl py-2.5 px-5
-                     bg-gradient-to-r from-indigo-500 to-violet-500
-                     text-white text-[13px] font-semibold
-                     shadow-[0_8px_24px_-8px_rgba(99,102,241,0.6)]
-                     hover:shadow-[0_12px_32px_-8px_rgba(99,102,241,0.8)]
-                     hover:brightness-110 active:scale-[0.98] transition-all
-                     disabled:opacity-50 disabled:cursor-not-allowed disabled:brightness-75"
-        >
-          {phase === "validating" && (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Validating&hellip;</span>
-            </>
-          )}
-          {phase === "success" && (
-            <>
-              <CheckCircle2 className="w-4 h-4" />
-              <span>Welcome in</span>
-            </>
-          )}
-          {(phase === "idle" || phase === "error") && (
-            <>
-              <span>Activate</span>
-              <ArrowRight className="w-4 h-4" />
-            </>
-          )}
-        </button>
-      </div>
-
-      <div className="flex flex-col items-center gap-1.5 pt-2">
-        <p className="text-[11px] font-mono tracking-wider text-slate-600 uppercase">
-          Don&rsquo;t have a code yet?
-        </p>
-        <a
-          href="https://mxsafiri.github.io/ubongo.os/#access"
-          onClick={(e) => {
-            e.preventDefault();
-            invoke("open_url", {
-              url: "https://mxsafiri.github.io/ubongo.os/#access",
-            }).catch(() => {});
-          }}
-          className="text-[12px] text-indigo-400/90 hover:text-indigo-300 transition-colors cursor-pointer"
-        >
-          Request an invite &rarr;
-        </a>
-      </div>
     </div>
   );
 }

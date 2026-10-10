@@ -26,7 +26,12 @@ SERVER    = str(REPO_ROOT / "desktop" / "server" / "server.py")
 # ── Collect everything from heavy deps so PyInstaller doesn't miss data ──
 datas, binaries, hiddenimports = [], [], []
 
-for pkg in [
+# The server can't start without these. A missing one fails the build here
+# rather than shipping an app whose server crashes on launch.
+# (Install them with `pip install -r requirements.txt` before building.)
+import importlib.util
+
+REQUIRED = [
     "anthropic",
     "fastapi",
     "uvicorn",
@@ -34,20 +39,24 @@ for pkg in [
     "pydantic",
     "pydantic_settings",
     "watchdog",
-    "duckduckgo_search",
     "multipart",          # python-multipart (FastAPI File/Form for /transcribe)
     "httpx",              # async HTTP client used by /transcribe forwarding
-]:
-    try:
-        d, b, h = collect_all(pkg)
-        datas += d
-        binaries += b
-        hiddenimports += h
-    except Exception:
-        pass  # package not installed — ok, we'll error loudly at runtime
+]
+missing = [pkg for pkg in REQUIRED if importlib.util.find_spec(pkg) is None]
+if missing:
+    raise SystemExit(
+        f"[spec] missing required packages: {', '.join(missing)} — "
+        "run `pip install -r requirements.txt` first"
+    )
 
-# Optional heavy deps — memory layer will degrade gracefully if missing
-for pkg in ["lancedb", "pyarrow", "pandas"]:
+for pkg in REQUIRED:
+    d, b, h = collect_all(pkg)
+    datas += d
+    binaries += b
+    hiddenimports += h
+
+# Optional — web search degrades gracefully without it
+for pkg in ["duckduckgo_search"]:
     try:
         d, b, h = collect_all(pkg)
         datas += d

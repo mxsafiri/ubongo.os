@@ -10,9 +10,6 @@ groq>=0.9.0              # Groq free tier (Llama / Mixtral)
 ollama>=0.4.0            # Local models — offline fallback
 
 # Memory layer
-lancedb>=0.15.0          # Embedded vector DB — file metadata index
-pyarrow>=15.0.0          # Required by LanceDB
-pandas>=2.0.0            # DataFrame queries on file index
 watchdog>=4.0.0          # Real-time filesystem watcher
 
 # Desktop app server

@@ -5,6 +5,23 @@ All notable changes to Ubongo OS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-10-10
+
+### Fixed — The app's server starts again
+
+0.6.1 shipped without the local server's own packages (uvicorn, FastAPI,
+anthropic…), so the server crashed on launch and onboarding showed
+"Server unreachable". The release build now installs `requirements.txt`,
+fails if a required package is missing, and starts the packaged server on
+macOS to check it answers before publishing. CI runs the same check on
+every pull request.
+
+### Changed — No invite codes, anywhere
+
+The invite code screen is gone. START waits for the app's server to come
+up and goes straight in. Access sets itself up in the background and
+keeps retrying if ubongo's servers can't be reached, so it never blocks you.
+
 ## [0.6.1] - 2026-10-10
 
 ### Changed — No invite code needed
