@@ -10,6 +10,7 @@ import threading
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Optional
 
+from assistant_cli.memory.extract import CONTENT_EXTENSIONS, extract_text
 from assistant_cli.memory.store import MemoryStore, file_record
 
 logger = logging.getLogger("assistant_cli.memory")
@@ -91,6 +92,7 @@ class FileWatcher:
         self.roots = [Path(r).expanduser() for r in roots] if roots is not None else default_roots()
         self._observer: Any = None
         self._scan_lock = threading.Lock()
+        self._content_lock = threading.Lock()
 
     @property
     def is_running(self) -> bool:
@@ -101,14 +103,37 @@ class FileWatcher:
         holding exactly what's on disk now. Returns the number indexed."""
         with self._scan_lock:
             if replace:
-                return self.store.replace_all(walk_files(self.roots))
-            total, batch = 0, []
-            for rec in walk_files(self.roots):
-                batch.append(rec)
-                if len(batch) >= _BATCH:
-                    total += self.store.upsert_many(batch)
-                    batch = []
-            return total + self.store.upsert_many(batch)
+                total = self.store.replace_all(walk_files(self.roots))
+            else:
+                total, batch = 0, []
+                for rec in walk_files(self.roots):
+                    batch.append(rec)
+                    if len(batch) >= _BATCH:
+                        total += self.store.upsert_many(batch)
+                        batch = []
+                total += self.store.upsert_many(batch)
+        self.index_contents()
+        return total
+
+    def index_contents(self, max_files: int = 20_000) -> int:
+        """Read the text of documents whose current version isn't indexed yet
+        (newest first). Safe to call repeatedly; returns how many were read."""
+        if not self._content_lock.acquire(blocking=False):
+            return 0  # another pass is already running
+        done = 0
+        try:
+            while done < max_files:
+                batch = self.store.pending_content(CONTENT_EXTENSIONS, limit=200)
+                if not batch:
+                    break
+                for path, modified in batch:
+                    self.store.set_content(path, modified, extract_text(path))
+                    done += 1
+        finally:
+            self._content_lock.release()
+        if done:
+            logger.info("Indexed the text of %d documents", done)
+        return done
 
     def start(self) -> bool:
         """Start watching the roots for changes. False if watchdog isn't available."""
@@ -129,6 +154,9 @@ class FileWatcher:
         observer.daemon = True
         observer.start()
         self._observer = observer
+        # Catch up on documents whose text isn't indexed yet (e.g. an index
+        # built before content search existed)
+        threading.Thread(target=self.index_contents, daemon=True).start()
         return True
 
     def stop(self) -> None:
@@ -160,6 +188,8 @@ class _Handler(_Base):
         rec = file_record(path)
         if rec:
             self.store.upsert(rec)
+            if rec["extension"] in CONTENT_EXTENSIONS:
+                self.store.set_content(rec["path"], rec["modified"], extract_text(rec["path"]))
 
     def on_created(self, event):
         self._index(event.src_path)

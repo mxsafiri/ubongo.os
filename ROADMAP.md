@@ -48,13 +48,17 @@ Swahili, and it actually gets done on their Mac.
 - [ ] Release 0.6.2: Actions → Release → Run workflow → `0.6.2` *(Victor)*
 - [ ] Signing + notarization *(workflow ready; needs NEDApay's Apple secrets, see `docs/RELEASING.md`)*
 - [ ] Auto-update with the Tauri updater *(needs an updater public key, see `docs/RELEASING.md`)*
-- [ ] Every merge builds a test DMG on macOS
+- [x] Every merge builds a test DMG on macOS (CI artifact `ubongo-dmg`)
 - [ ] Move Surfari to its own repo and Vercel project; Ubongo gets its own landing site
 - [x] README describes the real product
 
 ## Phase 1: the core loop
 
-- [ ] Find & summarise: search by meaning, not just file names; read PDFs and docs; answer with sources
+- [x] Find & summarise, step 1: read inside PDFs, Word, PowerPoint, Excel, OpenDocument and text
+      files; search matches what documents *say*; `read_file` tool; multi-step agent loop
+      (search → read → answer) that names the file it used
+- [ ] Find & summarise, step 2: search by meaning (embeddings), not only matching words; scanned PDFs (OCR)
+- [ ] Find & summarise, step 3: answers show the source file as a card you can open
 - [ ] Write & reply: drafts in the user's chosen tone; copy or insert into the frontmost app
 - [ ] Voice in Swahili and English, end to end
 - [ ] A CI test for each hero flow

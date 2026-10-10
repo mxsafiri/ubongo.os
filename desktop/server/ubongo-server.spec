@@ -39,6 +39,7 @@ REQUIRED = [
     "pydantic",
     "pydantic_settings",
     "watchdog",
+    "pypdf",              # text inside PDFs
     "multipart",          # python-multipart (FastAPI File/Form for /transcribe)
     "httpx",              # async HTTP client used by /transcribe forwarding
 ]
