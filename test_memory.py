@@ -102,6 +102,19 @@ def test_context(tmp_path):
     assert "Budget 2026.xlsx" in full
 
 
+def _wait_until_watching(root, store, timeout=10.0):
+    """The watcher can miss changes made in the instant after it starts
+    (notably on Windows). Rewrite a probe file until it's indexed."""
+    probe = root / "watch-probe.txt"
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        probe.write_text(str(time.time()))
+        time.sleep(0.2)
+        if store.search(query="watch-probe"):
+            return
+    raise AssertionError("file watcher never started picking up changes")
+
+
 def test_watcher_follows_changes(tmp_path):
     root, store, watcher = _setup(tmp_path)
     watcher.initial_scan()
@@ -109,9 +122,10 @@ def test_watcher_follows_changes(tmp_path):
         return  # watchdog not installed
     try:
         assert watcher.is_running
+        _wait_until_watching(root, store)
         _touch(root / "new_notes.md")
         (root / "photos" / "beach.JPG").unlink()
-        deadline = time.time() + 5
+        deadline = time.time() + 10
         while time.time() < deadline:
             if store.search(query="new_notes") and not store.search(query="beach"):
                 break

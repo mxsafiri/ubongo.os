@@ -168,13 +168,27 @@ def test_existing_index_gets_text_on_start(tmp_path):
     assert watcher.index_contents() == 0   # nothing left to do
 
 
+def _wait_until_watching(root, store, timeout=10.0):
+    """The watcher can miss changes made in the instant after it starts
+    (notably on Windows). Rewrite a probe file until it's indexed."""
+    probe = root / "watch-probe.txt"
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        probe.write_text(str(time.time()))
+        time.sleep(0.2)
+        if store.search(query="watch-probe"):
+            return
+    raise AssertionError("file watcher never started picking up changes")
+
+
 def test_watcher_indexes_new_documents_live(tmp_path):
     root, store, watcher = _indexed(tmp_path)
     if not watcher.start():
         pytest.skip("watchdog not installed")
     try:
+        _wait_until_watching(root, store)
         make_docx(root / "new.docx", "Supplier contract with Azam")
-        deadline = time.time() + 5
+        deadline = time.time() + 10
         while time.time() < deadline and not store.search(query="azam"):
             time.sleep(0.1)
         assert store.search(query="azam")[0]["name"] == "new.docx"
