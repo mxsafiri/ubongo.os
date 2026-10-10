@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Improved — Voice in Kiswahili and English
+
+- Choose **Kiswahili**, **English** or **both** at onboarding. "Both" lets
+  you mix languages in one sentence.
+- Whisper gets a bilingual hint with local names (Kariakoo, LUKU, DAWASA,
+  M-Pesa, NEDApay, nTZS…), so mixed speech isn't forced into one language
+  and names are spelled the way people write them. If Whisper only echoes
+  that hint back on a near-silent clip, the clip counts as silence.
+- Voice now says what's happening and what went wrong on screen:
+  transcribing, microphone not allowed (and where to allow it), not ready
+  yet, or nothing heard. Before, those were silent.
+- The proxy passes the hint through and reports the detected language.
+
 ### Added — Write & reply
 
 Select a message in Mail, WhatsApp or anywhere, press ⌥Space and say

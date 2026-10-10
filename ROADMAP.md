@@ -64,7 +64,11 @@ Swahili, and it actually gets done on their Mac.
       that app only when you click it
 - [ ] Write & reply, step 2: reply in the thread's language and match the other person's register;
       remember how the user signs off
-- [ ] Voice in Swahili and English, end to end
+- [x] Voice, step 1: Kiswahili, English or both (chosen at onboarding); Whisper gets a bilingual
+      prompt with local names; answers follow the language spoken; status and every voice error
+      shown on screen (mic permission, not ready, nothing heard)
+- [ ] Voice, step 2: speak answers aloud — needs a cloud TTS with a Swahili voice (macOS has none);
+      pick a provider and budget
 - [ ] A CI test for each hero flow
 - [ ] Hide unfinished features from the UI
 - [ ] Fix the ~70 older type errors, then make the whole-package type check block CI

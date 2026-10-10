@@ -350,6 +350,7 @@ async def transcribe(
     request: Request,
     file: UploadFile = File(...),
     language: Optional[str] = Form(default=None),
+    prompt: Optional[str] = Form(default=None),
     x_api_key: Optional[str] = Header(default=None, alias="x-api-key"),
 ):
     """
@@ -394,11 +395,15 @@ async def transcribe(
     files = {"file": (filename, audio_bytes, content_type)}
     data: dict[str, str] = {
         "model": GROQ_TRANSCRIBE_MODEL,
-        "response_format": "json",
+        "response_format": "verbose_json",   # includes the detected language
         "temperature": "0",
     }
     if language:
         data["language"] = language
+    if prompt:
+        # Steers spelling and language (e.g. Swahili + English); Whisper
+        # only reads the last ~224 tokens, so cap it
+        data["prompt"] = prompt[:800]
 
     headers = {"Authorization": f"Bearer {GROQ_KEY}"}
 
@@ -427,7 +432,7 @@ async def transcribe(
     payload = _safe_json(resp)
     text = (payload.get("text") or "").strip()
 
-    response = JSONResponse({"text": text})
+    response = JSONResponse({"text": text, "language": payload.get("language")})
     response.headers["x-ubongo-remaining-today"] = str(remaining)
     response.headers["x-ubongo-daily-limit"] = str(DAILY_QUERY_LIMIT)
     return response

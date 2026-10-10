@@ -741,14 +741,51 @@ def memory_rescan():
 _GROQ_BASE = "https://api.groq.com/openai/v1"
 _GROQ_TRANSCRIBE_MODEL = "whisper-large-v3-turbo"
 
+# Whisper takes a short "previous text" prompt that steers spelling and
+# language. Saying the conversation is in Swahili and English keeps mixed
+# speech from being forced into one language, and the names get spelled the
+# way people write them. It deliberately contains no commands a user might
+# actually say (see _clean_transcript).
+_VOICE_PROMPT = (
+    "Mazungumzo haya ni kwa Kiswahili na English. Majina: Kariakoo, Posta, Mlimani, "
+    "Dar es Salaam, LUKU, DAWASA, TANESCO, M-Pesa, Tigo Pesa, Airtel Money, NEDApay, nTZS."
+)
+_VOICE_LANGUAGES = {"sw", "en"}
+
+
+def _voice_prompt(agent_name: Optional[str]) -> str:
+    name = (agent_name or "").strip()[:32]
+    return f"{name}, {_VOICE_PROMPT}" if name else _VOICE_PROMPT
+
+
+def _clean_transcript(text: str, prompt: str) -> str:
+    """Whisper sometimes "hears" its own prompt on a near-silent clip.
+    A long transcript that is just a piece of the prompt is that echo, not
+    speech; short ones ("Dar es Salaam") are real and kept."""
+    t = re.sub(r"\W+", " ", (text or "").lower()).strip()
+    p = re.sub(r"\W+", " ", prompt.lower())
+    if len(t) >= 40 and t in p:
+        return ""
+    return (text or "").strip()
+
+
+def _language_name(code: Optional[str]) -> Optional[str]:
+    """Groq reports the detected language as a name ("swahili") or code."""
+    c = (code or "").strip().lower()
+    return {"swahili": "sw", "sw": "sw", "english": "en", "en": "en"}.get(c, c or None)
+
 
 @app.post("/transcribe")
 async def transcribe(
     file: UploadFile = File(...),
     language: Optional[str] = Form(default=None),
+    agent_name: Optional[str] = Form(default=None),
 ):
     """
-    Transcribe a short audio clip and return ``{"text": "..."}``.
+    Transcribe a short audio clip and return ``{"text": "...", "language": "sw"|"en"|...}``.
+
+    ``language`` is "sw" or "en" to force one; anything else auto-detects
+    (with a bilingual prompt so Swahili and mixed speech come through).
 
     Routing:
       1. ``settings.groq_api_key`` is set → call Groq directly (no quota hit).
@@ -767,6 +804,9 @@ async def transcribe(
 
     filename = file.filename or "clip.webm"
     content_type = file.content_type or "audio/webm"
+    language = (language or "").strip().lower()
+    language = language if language in _VOICE_LANGUAGES else None
+    prompt = _voice_prompt(agent_name)
 
     # Path 1 — direct Groq (BYOK)
     groq_key = (settings.groq_api_key or "").strip()
@@ -774,8 +814,9 @@ async def transcribe(
         files = {"file": (filename, audio_bytes, content_type)}
         data: dict = {
             "model": _GROQ_TRANSCRIBE_MODEL,
-            "response_format": "json",
+            "response_format": "verbose_json",   # includes the detected language
             "temperature": "0",
+            "prompt": prompt,
         }
         if language:
             data["language"] = language
@@ -798,15 +839,18 @@ async def transcribe(
                 err_msg = resp.text[:300]
             raise HTTPException(status_code=resp.status_code, detail=err_msg)
 
-        text = (resp.json().get("text") or "").strip()
-        return {"text": text}
+        payload = resp.json()
+        return {
+            "text": _clean_transcript(payload.get("text") or "", prompt),
+            "language": language or _language_name(payload.get("language")),
+        }
 
     # Path 2 — proxy with invite code
     invite_code = (settings.invite_code or "").strip()
     if invite_code:
         proxy = settings.proxy_url.rstrip("/")
         files = {"file": (filename, audio_bytes, content_type)}
-        data: dict = {}
+        data: dict = {"prompt": prompt}
         if language:
             data["language"] = language
 
@@ -828,17 +872,15 @@ async def transcribe(
                 err_msg = resp.text[:300]
             raise HTTPException(status_code=resp.status_code, detail=err_msg)
 
-        text = (resp.json().get("text") or "").strip()
-        return {"text": text}
+        payload = resp.json()
+        return {
+            "text": _clean_transcript(payload.get("text") or "", prompt),
+            # Older proxies only return text; the language is then unknown
+            "language": language or _language_name(payload.get("language")),
+        }
 
-    # Path 3 — nothing configured
-    raise HTTPException(
-        status_code=503,
-        detail=(
-            "Voice input needs an invite code or a Groq API key. "
-            "Add one in Settings."
-        ),
-    )
+    # Path 3 — access isn't set up yet (it sets itself up in the background)
+    raise HTTPException(status_code=503, detail=_no_provider_detail())
 
 
 # ─────────────────────────────────────────────────────────────────────────
